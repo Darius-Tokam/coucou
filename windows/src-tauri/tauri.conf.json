@@ -12,9 +12,8 @@
   "app": {
     "withGlobalTauri": false,
     "security": {
-      "assetProtocol": { "enable": true, "scope": [] },
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self' ipc: http://ipc.localhost",
-      "devCsp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self' ipc: http://ipc.localhost ws://localhost:1420 http://localhost:1420"
+      "csp": "default-src 'self'; script-src 'self' mascot: http://mascot.localhost; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: mascot: http://mascot.localhost; media-src 'self' blob: mascot: http://mascot.localhost; connect-src 'self' ipc: http://ipc.localhost mascot: http://mascot.localhost; frame-src 'self'",
+      "devCsp": "default-src 'self'; script-src 'self' mascot: http://mascot.localhost; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: mascot: http://mascot.localhost; media-src 'self' blob: mascot: http://mascot.localhost; connect-src 'self' ipc: http://ipc.localhost ws://localhost:1420 http://localhost:1420 mascot: http://mascot.localhost; frame-src 'self'"
     },
     "windows": [
       {

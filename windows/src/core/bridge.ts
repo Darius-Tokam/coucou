@@ -34,6 +34,8 @@ export interface MascotInfo {
   defaultState: string;
   manifestPath: string;
   scriptPath: string;
+  /** Root of the `mascot` protocol: manifest.json and mascot.js live under it. */
+  baseUrl: string;
 }
 
 /**

@@ -873,6 +873,16 @@ pub fn run() {
     let gate = Arc::new(PollGate::new());
 
     let mut builder = tauri::Builder::default()
+        // The active MascotForge mascot's files, for the island's iframe (mascot.rs).
+        .register_uri_scheme_protocol("mascot", |_ctx, request| {
+            let range = request.headers().get("range").and_then(|v| v.to_str().ok());
+            let served = mascot::respond(&mascot::current_dir(), request.uri().path(), range);
+            let mut response = tauri::http::Response::builder().status(served.status);
+            for (name, value) in served.headers {
+                response = response.header(name, value);
+            }
+            response.body(served.body).unwrap_or_default()
+        })
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
             // `coucou --shortcut <action>`: what a desktop's own keyboard
             // settings run where we can't listen for keys ourselves (Wayland).
@@ -1095,8 +1105,6 @@ pub fn run() {
             create_settings_window(&handle);
             // Same rule for Mochi's desktop window and the dictation pill.
             desktop::setup(&handle);
-            // The MascotForge export the island loads (mascot.rs), and nothing else.
-            let _ = app.asset_protocol_scope().allow_directory(mascot::mascots_dir(), true);
             flow::setup(&handle);
             notes::setup(&handle);
 
