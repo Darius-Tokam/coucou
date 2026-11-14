@@ -103,12 +103,14 @@ fn boot(app: AppHandle, shared: State<Shared>) -> BootInfo {
 fn save_settings(app: AppHandle, shared: State<Shared>, settings: Settings) {
     let (settings, screen_changed, autostart_changed, shortcuts_changed) = {
         let mut current = shared.settings.lock().unwrap();
-        let screen_changed = current.screen != settings.screen;
+        let screen_changed = current.screen != settings.screen || current.island_anchor != settings.island_anchor;
         let autostart_changed = current.autostart != settings.autostart;
         let shortcuts_changed = current.shortcuts != settings.shortcuts;
         // Where Mochi sits on the desktop is desktop.rs's to say, not a webview's.
         let mut settings = settings.clone();
         settings.desktop_mochi = current.desktop_mochi.clone();
+        // Where the corner mascot sits is the window's to say (saved when it is dragged).
+        settings.corner_pos = current.corner_pos;
         // Same for the phone link: only its own commands turn it on or off.
         settings.phone_link = current.phone_link;
         settings.phone_chat = current.phone_chat;
@@ -193,11 +195,53 @@ fn set_collapsed(app: AppHandle, shared: State<Shared>, collapsed: bool, width: 
     platform::set_pointer_watch(!collapsed);
 }
 
+/// Corner mode, closed: the window is the mascot, so where it moves is where
+/// the mascot now lives. Saved once it has stayed put for half a second, so a
+/// drag writes settings.json once, not at every step.
+fn corner_moved(app: &AppHandle, x: f64, y: f64) {
+    let shared = app.state::<Shared>();
+    if !shared.gate.collapsed.load(Ordering::Relaxed) || shared.settings.lock().unwrap().island_anchor != "corner" {
+        return;
+    }
+    static LATEST: Mutex<Option<(f64, f64)>> = Mutex::new(None);
+    *LATEST.lock().unwrap() = Some((x, y));
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        if *LATEST.lock().unwrap() != Some((x, y)) {
+            return; // it moved again since
+        }
+        let shared = app.state::<Shared>();
+        let settings = {
+            let mut current = shared.settings.lock().unwrap();
+            let pos = Some(settings::CornerPos { x, y });
+            if current.corner_pos == pos {
+                return;
+            }
+            current.corner_pos = pos;
+            current.clone()
+        };
+        if let Err(err) = settings::save(&settings) {
+            log::line(format!("could not save the mascot's place: {err}"));
+        }
+        let _ = app.emit("settings-changed", settings);
+    });
+}
+
 /// The front end pushes the island shape; Rust decides click-through from it.
 #[tauri::command]
 fn set_island_rect(app: AppHandle, shared: State<Shared>, x: f64, y: f64, width: f64, height: f64) {
     shared.gate.set_rect(island::IslandRect { x, y, w: width, h: height });
     // Without the cursor poll the input region is the click-through: it follows the island.
+    if !platform::CURSOR_POLL {
+        island::refresh_click_through(&app, &shared.gate);
+    }
+}
+
+/// Corner mode: the mascot and the open panel take the mouse, the rest of the window doesn't.
+#[tauri::command]
+fn set_island_rects(app: AppHandle, shared: State<Shared>, rects: Vec<island::IslandRect>) {
+    shared.gate.set_rects(rects);
     if !platform::CURSOR_POLL {
         island::refresh_click_through(&app, &shared.gate);
     }
@@ -927,6 +971,7 @@ pub fn run() {
             set_system_languages,
             set_collapsed,
             set_island_rect,
+            set_island_rects,
             focus_window,
             reposition,
             fit_zoom,
@@ -1111,10 +1156,13 @@ pub fn run() {
             if let Some(win) = island::window(&handle) {
                 // Where Tauri takes the drop itself (Linux), its paths are the
                 // ones ingest_file may copy (files.rs).
-                win.on_window_event(|event| {
-                    if let tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event {
+                let moved_app = handle.clone();
+                win.on_window_event(move |event| match event {
+                    tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) => {
                         files::allow_dropped(paths.iter().map(|p| p.to_string_lossy().to_string()));
                     }
+                    tauri::WindowEvent::Moved(pos) => corner_moved(&moved_app, pos.x as f64, pos.y as f64),
+                    _ => {}
                 });
                 platform::make_non_activating(&win);
                 #[cfg(windows)]

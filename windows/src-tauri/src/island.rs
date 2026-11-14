@@ -59,12 +59,89 @@ pub struct ScreenInfo {
 /// The island shape in window-logical coordinates, pushed by the front end.
 /// The poll thread owns the click-through decision so it lands in the same 16 ms
 /// tick as the cursor read — an IPC round trip here loses clicks.
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Default, Debug, PartialEq, Serialize, serde::Deserialize)]
 pub struct IslandRect {
     pub x: f64,
     pub y: f64,
     pub w: f64,
     pub h: f64,
+}
+
+/// Side of the MascotForge mascot (or Mochi) in corner mode, logical px.
+pub const MASCOT_SIZE: f64 = 200.0;
+/// Gap between the mascot and the edges of the work area, logical px.
+const CORNER_MARGIN: f64 = 16.0;
+
+/// Corner mode: where the window goes and what sits where inside it.
+/// `window` is in physical screen px; `mascot` and `panel` in window-logical px.
+#[derive(Serialize, Clone, Copy, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CornerLayout {
+    pub window: IslandRect,
+    pub mascot: IslandRect,
+    pub panel: Option<IslandRect>,
+}
+
+/// The window for the mascot at `mascot_at` (physical top-left; None, or off
+/// the work area: the bottom-right corner), and the panel of logical size
+/// `panel` beside it toward the centre of `work` (physical), kept on screen.
+pub fn corner_layout(work: IslandRect, scale: f64, mascot_at: Option<(f64, f64)>, panel: Option<(f64, f64)>) -> CornerLayout {
+    let size = MASCOT_SIZE * scale;
+    let margin = CORNER_MARGIN * scale;
+    let (right, bottom) = (work.x + work.w, work.y + work.h);
+    let home = (right - margin - size, bottom - margin - size);
+    let (mx, my) = mascot_at
+        .filter(|&(x, y)| x >= work.x && y >= work.y && x + size <= right && y + size <= bottom)
+        .unwrap_or(home);
+    let mascot = IslandRect { x: mx, y: my, w: size, h: size };
+
+    let Some((pw, ph)) = panel else {
+        return CornerLayout { window: mascot, mascot: IslandRect { x: 0.0, y: 0.0, w: MASCOT_SIZE, h: MASCOT_SIZE }, panel: None };
+    };
+    let (pw, ph) = (pw * scale, ph * scale);
+    // Toward the centre: left of a mascot in the right half, above one in the bottom half.
+    let left = mx + size / 2.0 >= work.x + work.w / 2.0;
+    let up = my + size / 2.0 >= work.y + work.h / 2.0;
+    let px = if left { mx - pw } else { mx + size };
+    let py = if up { my + size - ph } else { my };
+    let px = px.min(right - pw).max(work.x);
+    let py = py.min(bottom - ph).max(work.y);
+    let panel = IslandRect { x: px, y: py, w: pw, h: ph };
+
+    let x0 = mascot.x.min(panel.x);
+    let y0 = mascot.y.min(panel.y);
+    let x1 = (mascot.x + mascot.w).max(panel.x + panel.w);
+    let y1 = (mascot.y + mascot.h).max(panel.y + panel.h);
+    let inside = |r: IslandRect| IslandRect { x: (r.x - x0) / scale, y: (r.y - y0) / scale, w: r.w / scale, h: r.h / scale };
+    CornerLayout {
+        window: IslandRect { x: x0, y: y0, w: x1 - x0, h: y1 - y0 },
+        mascot: inside(mascot),
+        panel: Some(inside(panel)),
+    }
+}
+
+/// The smallest rect around `rects` (empty when there are none).
+fn bounding(rects: &[IslandRect]) -> IslandRect {
+    let drawn: Vec<&IslandRect> = rects.iter().filter(|r| r.w > 0.0).collect();
+    if drawn.is_empty() {
+        return IslandRect::default();
+    }
+    let x0 = drawn.iter().map(|r| r.x).fold(f64::INFINITY, f64::min);
+    let y0 = drawn.iter().map(|r| r.y).fold(f64::INFINITY, f64::min);
+    let x1 = drawn.iter().map(|r| r.x + r.w).fold(f64::NEG_INFINITY, f64::max);
+    let y1 = drawn.iter().map(|r| r.y + r.h).fold(f64::NEG_INFINITY, f64::max);
+    IslandRect { x: x0, y: y0, w: x1 - x0, h: y1 - y0 }
+}
+
+/// Whether window-logical (x, y) is on one of `rects`, give or take HIT_MARGIN.
+pub fn hits(rects: &[IslandRect], x: f64, y: f64) -> bool {
+    rects.iter().any(|r| {
+        r.w > 0.0
+            && x >= r.x - HIT_MARGIN
+            && x <= r.x + r.w + HIT_MARGIN
+            && y >= r.y - HIT_MARGIN
+            && y <= r.y + r.h + HIT_MARGIN
+    })
 }
 
 /// Wakes / parks the cursor poll thread so a hidden island costs literally nothing.
@@ -75,7 +152,9 @@ pub struct PollGate {
     /// The window's logical size while collapsed: the closed island the page
     /// draws, or the wake strip.
     pub collapsed_size: Mutex<(f64, f64)>,
-    pub rect: Mutex<IslandRect>,
+    /// What takes the mouse: the island shape, or in corner mode the mascot
+    /// and the open panel.
+    pub rects: Mutex<Vec<IslandRect>>,
     /// Mirrors the window flag so we only call into the OS when it changes.
     ignoring: AtomicBool,
 }
@@ -87,13 +166,17 @@ impl PollGate {
             cv: Condvar::new(),
             collapsed: AtomicBool::new(true),
             collapsed_size: Mutex::new((STRIP_W, STRIP_H)),
-            rect: Mutex::new(IslandRect::default()),
+            rects: Mutex::new(Vec::new()),
             ignoring: AtomicBool::new(false),
         }
     }
 
     pub fn set_rect(&self, rect: IslandRect) {
-        *self.rect.lock().unwrap() = rect;
+        self.set_rects(vec![rect]);
+    }
+
+    pub fn set_rects(&self, rects: Vec<IslandRect>) {
+        *self.rects.lock().unwrap() = rects;
     }
 
     /// Forces the next poll tick to re-apply the flag (after a window resize).
@@ -429,6 +512,11 @@ pub fn apply_geometry(app: &AppHandle, pref: &str, collapsed: Option<(f64, f64)>
     let Some(win) = window(app) else { return };
     let Some(m) = target_monitor(app, pref) else { return };
 
+    if let Some(corner_pos) = corner_mode(app) {
+        apply_corner(&win, &m, corner_pos, collapsed.is_none());
+        return;
+    }
+
     let scale = m.scale_factor();
     let mp = *m.position();
     let ms = *m.size();
@@ -466,6 +554,32 @@ pub fn apply_geometry(app: &AppHandle, pref: &str, collapsed: Option<(f64, f64)>
             let _ = win.set_position(PhysicalPosition::new(x, y));
         }
     }
+}
+
+/// In corner mode, where the user left the mascot (None: the default corner);
+/// None outside corner mode.
+fn corner_mode(app: &AppHandle) -> Option<Option<(f64, f64)>> {
+    let shared = app.try_state::<crate::Shared>()?;
+    let settings = shared.settings.lock().unwrap();
+    (settings.island_anchor == "corner").then(|| settings.corner_pos.map(|p| (p.x, p.y)))
+}
+
+/// Corner mode: the mascot alone, or the mascot and the panel beside it.
+/// The page hears where each sits through `corner-layout`.
+fn apply_corner(win: &WebviewWindow, m: &Monitor, corner_pos: Option<(f64, f64)>, open: bool) {
+    let area = m.work_area();
+    let work = IslandRect {
+        x: area.position.x as f64,
+        y: area.position.y as f64,
+        w: area.size.width as f64,
+        h: area.size.height as f64,
+    };
+    let layout = corner_layout(work, m.scale_factor(), corner_pos, open.then_some((PANEL_W, PANEL_H)));
+    let w = layout.window;
+    let _ = win.set_size(PhysicalSize::new(w.w.round() as u32, w.h.round() as u32));
+    let _ = win.set_position(PhysicalPosition::new(w.x.round() as i32, w.y.round() as i32));
+    let _ = win.set_always_on_top(true);
+    let _ = win.emit("corner-layout", layout);
 }
 
 /// A closed island never grows past the panel, and never shrinks below one
@@ -557,12 +671,7 @@ pub fn spawn_cursor_poll(app: AppHandle, gate: Arc<PollGate>) {
                 // Click-through: the window only takes the mouse over the island
                 // shape. A small entry margin means the flag is already off by the
                 // time a moving cursor reaches a button.
-                let r = *gate.rect.lock().unwrap();
-                let on_island = r.w > 0.0
-                    && x >= r.x - HIT_MARGIN
-                    && x <= r.x + r.w + HIT_MARGIN
-                    && y >= r.y - HIT_MARGIN
-                    && y <= r.y + r.h + HIT_MARGIN;
+                let on_island = hits(&gate.rects.lock().unwrap(), x, y);
 
                 // A file being dragged has to be able to find us. WS_EX_TRANSPARENT
                 // — what click-through is on Windows — hides the window from
@@ -645,7 +754,8 @@ pub fn refresh_click_through(app: &AppHandle, gate: &PollGate) {
         let (w, h) = clamp_collapsed(*gate.collapsed_size.lock().unwrap());
         Some((0.0, 0.0, w, h))
     } else {
-        let r = *gate.rect.lock().unwrap();
+        // Linux takes one input region: the box around everything drawn.
+        let r = bounding(&gate.rects.lock().unwrap());
         if r.w <= 0.0 {
             // Nothing drawn yet: nothing takes the mouse.
             Some((0.0, 0.0, 0.0, 0.0))
@@ -663,5 +773,76 @@ pub fn refresh_click_through(app: &AppHandle, gate: &PollGate) {
 pub fn set_ignore_cursor(app: &AppHandle, ignore: bool) {
     if let Some(win) = window(app) {
         platform::set_click_through(&win, ignore);
+    }
+}
+
+#[cfg(test)]
+mod corner_tests {
+    use super::*;
+
+    fn rect(x: f64, y: f64, w: f64, h: f64) -> IslandRect {
+        IslandRect { x, y, w, h }
+    }
+
+    const WORK: IslandRect = IslandRect { x: 0.0, y: 0.0, w: 1920.0, h: 1040.0 };
+
+    #[test]
+    fn the_mascot_starts_bottom_right() {
+        let layout = corner_layout(WORK, 1.0, None, None);
+        assert_eq!(layout.window, rect(1704.0, 824.0, 200.0, 200.0));
+        assert_eq!(layout.mascot, rect(0.0, 0.0, 200.0, 200.0));
+        assert_eq!(layout.panel, None);
+    }
+
+    #[test]
+    fn the_panel_opens_toward_the_centre() {
+        let layout = corner_layout(WORK, 1.0, None, Some((720.0, 320.0)));
+        assert_eq!(layout.window, rect(984.0, 704.0, 920.0, 320.0));
+        assert_eq!(layout.panel, Some(rect(0.0, 0.0, 720.0, 320.0)));
+        assert_eq!(layout.mascot, rect(720.0, 120.0, 200.0, 200.0));
+        // The mascot has not moved on screen.
+        assert_eq!((layout.window.x + layout.mascot.x, layout.window.y + layout.mascot.y), (1704.0, 824.0));
+    }
+
+    #[test]
+    fn a_top_left_mascot_opens_right_and_down() {
+        let layout = corner_layout(WORK, 1.0, Some((16.0, 16.0)), Some((720.0, 320.0)));
+        assert_eq!(layout.window, rect(16.0, 16.0, 920.0, 320.0));
+        assert_eq!(layout.mascot, rect(0.0, 0.0, 200.0, 200.0));
+        assert_eq!(layout.panel, Some(rect(200.0, 0.0, 720.0, 320.0)));
+    }
+
+    #[test]
+    fn the_panel_stays_on_screen() {
+        let short = rect(0.0, 0.0, 1920.0, 400.0);
+        let layout = corner_layout(short, 1.0, Some((1704.0, 100.0)), Some((720.0, 320.0)));
+        // Upward would put the panel at y = -20: it comes down to the top of the work area.
+        assert_eq!(layout.window.y, 0.0);
+        assert_eq!(layout.panel.map(|p| p.y), Some(0.0));
+        assert_eq!(layout.window.y + layout.mascot.y, 100.0);
+    }
+
+    #[test]
+    fn a_lost_screen_sends_the_mascot_home() {
+        let layout = corner_layout(WORK, 1.0, Some((5000.0, 5000.0)), None);
+        assert_eq!(layout.window, rect(1704.0, 824.0, 200.0, 200.0));
+    }
+
+    #[test]
+    fn scale_two_doubles_the_window() {
+        let work = rect(0.0, 0.0, 3840.0, 2080.0);
+        let layout = corner_layout(work, 2.0, None, None);
+        assert_eq!(layout.window.w, 400.0);
+        assert_eq!(layout.mascot.w, 200.0);
+        assert_eq!(layout.window.x, 3840.0 - 32.0 - 400.0);
+    }
+
+    #[test]
+    fn a_click_between_mascot_and_panel_goes_through() {
+        let rects = [rect(720.0, 120.0, 200.0, 200.0), rect(0.0, 0.0, 720.0, 320.0)];
+        assert!(!hits(&rects, 850.0, 40.0), "the empty corner above the mascot");
+        assert!(hits(&rects, 800.0, 200.0), "on the mascot");
+        assert!(hits(&rects, 300.0, 100.0), "on the panel");
+        assert!(!hits(&[], 10.0, 10.0), "nothing drawn yet");
     }
 }

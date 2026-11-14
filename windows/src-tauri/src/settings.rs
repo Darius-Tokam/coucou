@@ -120,6 +120,20 @@ pub struct Settings {
     /// (agy_approvals.rs). Off by default; owned by the Rust side like `phone_link`, so
     /// what a webview sends back is ignored. The Mac's key is the same.
     pub agy_approvals_enabled: bool,
+    /// Where the island lives: "corner" (a MascotForge mascot or Mochi in a
+    /// corner of the screen, the panel opening beside it) or "top" (the
+    /// original island at the top centre). Anything else reads as "top".
+    pub island_anchor: String,
+    /// Corner mode: the mascot's top-left in physical screen px, where the user
+    /// last dropped it; None for the bottom-right corner. Owned by Rust
+    /// (lib.rs saves it when the window is dragged), like `desktop_mochi`.
+    pub corner_pos: Option<CornerPos>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct CornerPos {
+    pub x: f64,
+    pub y: f64,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -192,6 +206,8 @@ impl Default for Settings {
             show_clock: false,
             closed_island: "mochi".into(),
             agy_approvals_enabled: false,
+            island_anchor: "corner".into(),
+            corner_pos: None,
         }
     }
 }
@@ -494,7 +510,9 @@ mod tests {
   "phoneRelayUrl": "wss://relay.example.workers.dev",
   "showClock": true,
   "closedIsland": "music",
-  "agyApprovalsEnabled": true
+  "agyApprovalsEnabled": true,
+  "islandAnchor": "top",
+  "cornerPos": { "x": 100.0, "y": 200.0 }
 }"##;
 
     fn custom() -> Value {
@@ -1018,9 +1036,18 @@ mod tests {
                 "showClock",
                 "closedIsland",
                 "agyApprovalsEnabled",
+                "islandAnchor",
+                "cornerPos",
             ]
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_mascot_sits_in_a_corner_by_default() {
+        let settings = Settings::default();
+        assert_eq!(settings.island_anchor, "corner");
+        assert_eq!(settings.corner_pos, None);
     }
 
     #[test]

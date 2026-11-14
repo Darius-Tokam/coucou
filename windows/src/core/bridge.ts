@@ -24,6 +24,24 @@ async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T |
   }
 }
 
+/** A rectangle; window-logical px unless said otherwise. */
+export interface Rect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/**
+ * Corner mode (island.rs `corner-layout` event): the window in physical screen
+ * px, the mascot and the open panel in window-logical px.
+ */
+export interface CornerLayout {
+  window: Rect;
+  mascot: Rect;
+  panel: Rect | null;
+}
+
 /** The MascotForge export Coucou shows in the corner (src-tauri/src/mascot.rs). */
 export interface MascotInfo {
   name: string;
@@ -251,6 +269,9 @@ export const Bridge = {
    */
   setIslandRect: (x: number, y: number, width: number, height: number) =>
     call<void>("set_island_rect", { x, y, width, height }),
+
+  /** Corner mode: every rect that takes the mouse (the mascot, the open panel). */
+  setIslandRects: (rects: Rect[]) => call<void>("set_island_rects", { rects }),
 
   /** Give the window keyboard focus (chat field) and take it away again. */
   focusWindow: (focused: boolean) => call<void>("focus_window", { focused }),

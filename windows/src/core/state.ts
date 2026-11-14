@@ -109,6 +109,10 @@ export interface Settings {
   showClock: boolean;
   /** What the closed island shows at the top of the screen (see core/closed.ts). */
   closedIsland: string;
+  /** Where the island lives: "corner" (the mascot in a screen corner) or "top". */
+  islandAnchor: "top" | "corner";
+  /** Corner mode: the mascot's top-left in physical screen px; Rust saves it. */
+  cornerPos: { x: number; y: number } | null;
   absenceInterval: number;
   /** Declared pills next to the main one (at most 4), in the order they were added. */
   activeIntegrations: string[];
@@ -182,6 +186,8 @@ export const DEFAULT_SETTINGS: Settings = {
   alertsFromAllPills: false,
   showClock: false,
   closedIsland: "mochi",
+  islandAnchor: "corner",
+  cornerPos: null,
   absenceInterval: 180,
   activeIntegrations: [
     "integration_resend", "integration_n8n", "integration_vercel", "integration_github",
