@@ -2,7 +2,7 @@
 // Mirrors IslandRootView.swift + IslandWindowController.swift.
 
 import { Tracked, Spring, clamp } from "../core/anim";
-import { Bridge, IS_TAURI, onDragDrop, type DragDropPayload } from "../core/bridge";
+import { Bridge, IS_TAURI, onDragDrop, type CornerLayout, type DragDropPayload } from "../core/bridge";
 import {
   CLOSED_BOT_D, CLOSED_H, closedContent, closedIsland, closedWidth, type ClosedContent,
 } from "../core/closed";
@@ -33,6 +33,8 @@ import { IslandStateMachine } from "./fsm";
 import { refreshHookPills } from "./integrations";
 import { restoreAlertFocus } from "./hooks";
 import { DesktopLink } from "./desktop";
+import { CORNER_HOVER_CLOSE_S, HoverStart, MASCOT_SIZE, cornerRects, placeInPanel } from "./corner";
+import { CornerView } from "./corner-view";
 import type { ViewCommand } from "./shortcuts";
 import { DRAG_THRESHOLD } from "../mochi/desktop-logic";
 import { Updates } from "./update";
@@ -126,6 +128,15 @@ export class Island {
   private holdingOpen = false;
   /** Last shape handed to Rust for the click-through test. */
   private pushedRect = { x: -1, y: -1, w: -1, h: -1 };
+  /** Corner mode: where Rust put the mascot and the panel area (`corner-layout`). */
+  private cornerLayout: CornerLayout | null = null;
+  /** Corner mode's mascot: a MascotForge export, or Mochi. */
+  corner!: CornerView;
+  private pushedRects = "";
+  /** Corner mode: one hover per stay of the pointer on the folded mascot. */
+  private cornerHover = new HoverStart();
+  /** The top island's hover close delay, put back when leaving corner mode. */
+  private topHoverCloseDelay = 0.6;
 
   // Bot hover → love (IslandWindowController.botHoverIn)
   private botHovering = false;
@@ -155,6 +166,7 @@ export class Island {
 
   constructor(root: HTMLElement) {
     this.root = root;
+    this.topHoverCloseDelay = this.fsm.hoverCloseDelay;
     this.desktop = new DesktopLink({
       reveal: () => this.reveal(),
       wardrobeFromDesktop: () => this.wardrobeFromDesktop(),
@@ -400,6 +412,16 @@ export class Island {
     this.greetingCanvas.style.height = "150px";
 
     this.root.append(this.wakeStrip, this.islandEl);
+    this.corner = new CornerView(this.root, {
+      enter: () => this.wakeFromClosed(),
+      // While the panel is open, the cursor poll (onCursor) says when it leaves.
+      leave: () => {
+        this.cornerHover.leave();
+        if (this.collapsed) this.fsm.mouseLeft();
+      },
+      click: () => this.clickMascot(),
+      canDrag: () => this.collapsed,
+    });
     this.applyGeometry();
   }
 
@@ -885,8 +907,8 @@ export class Island {
     const r = this.radius.value;
     this.islandEl.style.width = `${w}px`;
     this.islandEl.style.height = `${hh}px`;
-    this.islandEl.style.borderRadius = `0 0 ${r}px ${r}px`;
-    this.islandEl.style.transform = `translateX(-50%)`;
+    this.islandEl.style.borderRadius = this.cornerMode ? `${r}px` : `0 0 ${r}px ${r}px`;
+    this.islandEl.style.transform = this.cornerMode ? "none" : `translateX(-50%)`;
     // These follow the island as it resizes, so they belong here rather than in
     // the state-driven DOM sync.
     this.miniGrid.style.left = `${w - 40 - 14.5}px`;
@@ -895,6 +917,17 @@ export class Island {
     this.greetingCanvas.style.left = `${(w - EXPANDED_W) / 2}px`;
     this.uploadCanvas.el.style.left = `${(w - EXPANDED_W) / 2}px`;
 
+    if (this.cornerMode) {
+      this.applyCornerGeometry();
+      return;
+    }
+    if (this.pushedRects !== "") {
+      // Back from corner mode: the top island's own placement.
+      this.pushedRects = "";
+      this.islandEl.style.left = "";
+      this.islandEl.style.top = "";
+      this.islandEl.style.visibility = "";
+    }
     const viewportW = window.innerWidth > 0 ? window.innerWidth : PANEL_W;
     const rect = { x: (viewportW - w) / 2, y: 0, w, h: hh };
     const p = this.pushedRect;
@@ -904,10 +937,61 @@ export class Island {
     }
   }
 
+  /** Corner mode: the card beside the mascot, shown only while open; Rust hears what takes the mouse. */
+  private applyCornerGeometry() {
+    const card = State.mode === "expanded" && this.cornerLayout ? this.islandRect() : null;
+    const shown = card != null && card.w > 0;
+    this.islandEl.style.left = `${card?.x ?? 0}px`;
+    this.islandEl.style.top = `${card?.y ?? 0}px`;
+    this.islandEl.style.visibility = shown ? "visible" : "hidden";
+    this.pushedRect = { x: -1, y: -1, w: -1, h: -1 };
+    if (!this.cornerLayout) return;
+    const rects = cornerRects(this.cornerLayout, shown ? card : null);
+    const key = rects.map((r) => [r.x, r.y, r.w, r.h].map(Math.round).join(",")).join("|");
+    if (key === this.pushedRects) return;
+    this.pushedRects = key;
+    void Bridge.setIslandRects(rects);
+  }
+
+  /** Rust placed the corner window (`corner-layout`). */
+  setCornerLayout(layout: CornerLayout) {
+    this.cornerLayout = layout;
+    this.corner.setLayout(layout);
+    this.applyGeometry();
+    this.ensureRunning();
+  }
+
+  /** Settings → Where Coucou lives → In a corner of the screen. */
+  private get cornerMode(): boolean {
+    return State.settings.islandAnchor === "corner";
+  }
+
+  /** Corner mode folds the window to the mascot whenever the card isn't open. */
+  private folded(): boolean {
+    return State.mode === "hidden" || (this.cornerMode && State.mode === "compact");
+  }
+
+  /** A click on the corner mascot opens the card and keeps it open; a second one closes it. */
+  private clickMascot() {
+    Sound.resume();
+    State.lastActivity = performance.now();
+    if (State.mode === "expanded" && this.fsm.pinned) {
+      this.collapse();
+      return;
+    }
+    this.fsm.pinned = true;
+    State.isPinned = true;
+    if (State.mode === "expanded") this.fsm.userInteracted();
+    else this.fsm.forceHome();
+  }
+
   /** Island rect in window coordinates (origin top-left of the 720×320 window). */
   private islandRect(): { x: number; y: number; w: number; h: number } {
     const w = this.width.value;
     const hh = this.height.value;
+    if (this.cornerMode) {
+      return (this.cornerLayout && placeInPanel(this.cornerLayout, w, hh)) ?? { x: -10_000, y: -10_000, w: 0, h: 0 };
+    }
     const viewportW = window.innerWidth > 0 ? window.innerWidth : PANEL_W;
     return { x: (viewportW - w) / 2, y: 0, w, h: hh };
   }
@@ -919,13 +1003,13 @@ export class Island {
       window.clearTimeout(this.collapseTimer);
       this.collapseTimer = null;
     }
-    if (State.mode === "hidden") {
+    if (this.folded()) {
       // Let the island finish folding, then shrink the window to it — to the
-      // closed island, or to the wake strip when that shows nothing: from
-      // there nothing polls the cursor at all.
+      // closed island, or to the wake strip when that shows nothing (in corner
+      // mode, to the mascot): from there nothing polls the cursor at all.
       this.collapseTimer = window.setTimeout(() => {
         this.collapseTimer = null;
-        if (State.mode !== "hidden") return;
+        if (!this.folded()) return;
         this.collapsed = true;
         this.sendCollapsedSize(true);
       }, 420);
@@ -965,13 +1049,21 @@ export class Island {
 
   /** The pointer is on the folded window (Rust's `closed-hover`): the island wakes. */
   wakeFromClosed() {
-    if (State.mode !== "hidden") return;
+    if (!this.folded()) return;
+    // Folded in a corner, Rust repeats this while the pointer stays: once is enough.
+    if (this.cornerMode && !this.cornerHover.enter(performance.now())) return;
     Sound.resume();
     this.fsm.mouseEntered();
   }
 
   /** Tells Rust the folded window's size: the closed island's, or none (the strip). */
   private sendCollapsedSize(force = false) {
+    if (this.cornerMode) {
+      if (!force && this.collapsedTo.w === MASCOT_SIZE) return;
+      this.collapsedTo = { w: MASCOT_SIZE, h: MASCOT_SIZE };
+      void Bridge.setCollapsed(true, MASCOT_SIZE, MASCOT_SIZE);
+      return;
+    }
     const size = this.closedShows ? { w: this.closedW, h: CLOSED_H } : { w: 0, h: 0 };
     if (!force && size.w === this.collapsedTo.w && size.h === this.collapsedTo.h) return;
     this.collapsedTo = size;
@@ -996,7 +1088,7 @@ export class Island {
       })
       : null;
     const key = content ? `${style}|${content.text}|${content.dot ?? ""}|${content.note}` : style;
-    const shown = State.mode === "hidden" && this.closedShows;
+    const shown = State.mode === "hidden" && this.closedShows && !this.cornerMode;
     this.closedEl.classList.toggle("on", shown && content != null);
     if (key === this.closedKey) return;
     this.closedKey = key;
@@ -1144,9 +1236,14 @@ export class Island {
       this.updateDropTarget(State.mouseInIsland.x, State.mouseInIsland.y);
     }
 
-    const inIsland =
+    // In corner mode the mascot counts too: going from the card to it keeps the card open.
+    const mascot = this.cornerMode ? this.cornerLayout?.mascot : undefined;
+    const onMascot = mascot != null &&
+      x >= mascot.x - HIT_MARGIN && x <= mascot.x + mascot.w + HIT_MARGIN &&
+      y >= mascot.y - HIT_MARGIN && y <= mascot.y + mascot.h + HIT_MARGIN;
+    const inIsland = onMascot || (
       x >= rect.x - HIT_MARGIN && x <= rect.x + rect.w + HIT_MARGIN &&
-      y >= rect.y - HIT_MARGIN && y <= rect.y + rect.h + HIT_MARGIN;
+      y >= rect.y - HIT_MARGIN && y <= rect.y + rect.h + HIT_MARGIN);
 
     // Recorded before the state machine hears of it: a transition it makes
     // right away (open on hover) reads where the pointer is, and must not see
@@ -1179,13 +1276,15 @@ export class Island {
 
   /** The greeting and the drop sequence draw a Mochi of their own: not that one. */
   private canDragOut(): boolean {
+    // In corner mode Mochi is already out on the screen.
+    if (this.cornerMode) return false;
     if (State.mode === "hidden" || !this.desktop.canPickUp()) return false;
     return !(State.mode === "expanded" && (State.view === "greeting" || this.uploadActive));
   }
 
   private isBotHit(x: number, y: number): boolean {
-    // Out on the desktop, the island's Mochi is invisible: nothing to hit.
-    if (State.mochiOnDesktop) return false;
+    // Out on the desktop, or replaced by a MascotForge mascot: nothing to hit.
+    if (State.mochiOnDesktop || this.mascotReplacesMochi) return false;
     const rect = this.islandRect();
     const cx = rect.x + this.botCx.value;
     const cy = rect.y + this.botCy.value;
@@ -1339,7 +1438,7 @@ export class Island {
     const greetingActive = State.mode === "expanded" && State.view === "greeting";
     // The drop canvas draws its own Mochi; two of them would overlap. Out on the
     // desktop, he isn't here at all.
-    const away = State.mochiOnDesktop;
+    const away = State.mochiOnDesktop || this.mascotReplacesMochi;
     const visible = p.opacity > 0 && !greetingActive && !this.uploadActive && !away;
     this.botCanvas.style.opacity = visible ? "1" : "0";
 
@@ -1540,6 +1639,12 @@ export class Island {
 
     syncMiniBotStates(State.tasks);
     this.engine.setState(State.effectiveState);
+    this.corner.setState(State.effectiveState);
+  }
+
+  /** A MascotForge mascot is in the corner: the panel shows no Mochi. */
+  private get mascotReplacesMochi(): boolean {
+    return this.cornerMode && this.corner.mascotActive;
   }
 
   /** The clock sits in the middle of the compact island, where the notch is on a Mac. */
@@ -1568,7 +1673,11 @@ export class Island {
     Sound.setEnabled(State.settings.soundEnabled);
     Sound.setVolume(State.settings.soundVolume);
     this.fsm.homeToPetitDelay = State.settings.autoCloseInterval;
-    this.fsm.openOnHover = State.settings.openOnHover;
+    // The corner card opens on hover and folds fast, whatever the top island does.
+    this.fsm.openOnHover = this.cornerMode || State.settings.openOnHover;
+    this.fsm.hoverCloseDelay = this.cornerMode ? CORNER_HOVER_CLOSE_S : this.topHoverCloseDelay;
+    this.corner.setEnabled(this.cornerMode);
+    this.updateWindowCollapsed();
     State.notify();
     // ponytail: one timer for the life of the window; a minute is the clock's finest tick.
     this.clockTimer ??= window.setInterval(() => this.updateClock(), 10_000);

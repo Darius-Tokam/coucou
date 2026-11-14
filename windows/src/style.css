@@ -57,6 +57,28 @@ body {
   inset: 0;
 }
 
+/* Corner mode (island/corner-view.ts): the mascot, no background. */
+.mascot-box {
+  position: absolute;
+  display: none;
+  transition: transform 120ms ease-out;
+}
+.mascot-box:has(.mascot-layer:active) {
+  transform: scale(0.97);
+}
+.mascot-mochi {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.mascot-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  cursor: grab;
+}
+
 /* Invisible strip that wakes the island when it is hidden. */
 #wake-strip {
   position: fixed;

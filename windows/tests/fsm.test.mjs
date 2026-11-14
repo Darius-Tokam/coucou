@@ -400,3 +400,17 @@ test("open on hover: an island opened by an alert keeps the normal delay", () =>
   seconds(2);
   assert.equal(fsm.state, "petit");
 });
+
+test("corner mode: the card opens on hover and folds 0.3 s after the pointer leaves", () => {
+  fsm.openOnHover = true;
+  fsm.hoverCloseDelay = 0.3;
+  fsm.forcePetit();
+  fsm.mouseEntered();
+  seconds(0.5);
+  assert.equal(fsm.state, "home");
+  fsm.mouseLeft();
+  seconds(0.29);
+  assert.equal(fsm.state, "home");
+  seconds(0.01);
+  assert.equal(fsm.state, "petit");
+});
