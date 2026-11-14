@@ -122,9 +122,11 @@ export class CornerView {
     const size = this.box.clientWidth || 200;
     const drawW = size * 0.8;
     const dpr = Math.min(2, window.devicePixelRatio || 1);
-    if (this.mochiCanvas.width !== Math.round(size * dpr)) {
-      this.mochiCanvas.width = Math.round(size * dpr);
-      this.mochiCanvas.height = Math.round(size * dpr);
+    // Both sides: a fresh canvas is 300 × 150, and 300 is already the width at 1.5×.
+    const side = Math.round(size * dpr);
+    if (this.mochiCanvas.width !== side || this.mochiCanvas.height !== side) {
+      this.mochiCanvas.width = side;
+      this.mochiCanvas.height = side;
     }
     this.mochi.update(dt);
     ctx.setTransform(dpr, 0, 0, dpr, ((size - drawW) / 2) * dpr, 0);
