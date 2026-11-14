@@ -24,6 +24,32 @@ async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T |
   }
 }
 
+/** The MascotForge export Coucou shows in the corner (src-tauri/src/mascot.rs). */
+export interface MascotInfo {
+  name: string;
+  engine: "blob" | "3d" | "video";
+  credit: string | null;
+  alpha: "stacked" | "none";
+  states: string[];
+  defaultState: string;
+  manifestPath: string;
+  scriptPath: string;
+}
+
+/**
+ * Imports a MascotForge export. The info on success; on failure the error
+ * code ("not_an_export", "bad_manifest", "wrong_version", "missing_file:<file>",
+ * "io"), or "io" outside Tauri.
+ */
+async function mascotImport(folder: string): Promise<MascotInfo | string> {
+  if (!IS_TAURI) return "io";
+  try {
+    return await invoke<MascotInfo>("mascot_import", { folder });
+  } catch (err) {
+    return typeof err === "string" ? err : "io";
+  }
+}
+
 export interface BootInfo {
   settings: Settings;
   /** Logical screen rect of the monitor the island lives on. */
@@ -270,6 +296,12 @@ export const Bridge = {
 
   /** The system's folder picker, `start` open in it; null when cancelled. */
   pickFolder: (start: string | null) => call<string | null>("pick_folder", { start }),
+
+  mascotImport,
+  /** The active MascotForge mascot, null for Mochi. */
+  mascotCurrent: () => call<MascotInfo | null>("mascot_current"),
+  /** Back to Mochi. */
+  mascotClear: () => call<void>("mascot_clear"),
 
   /**
    * A file dropped on a session: its window comes forward and the paths are

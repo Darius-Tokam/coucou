@@ -25,6 +25,7 @@ mod launch;
 mod local_chat;
 mod log;
 mod mail;
+mod mascot;
 mod net;
 mod notes;
 mod openai_compat;
@@ -1021,6 +1022,9 @@ pub fn run() {
             sounds::custom_sound,
             sounds::reveal_sounds_folder,
             sounds::reload_sounds,
+            mascot::mascot_import,
+            mascot::mascot_current,
+            mascot::mascot_clear,
             spotify::spotify_refresh,
             spotify::spotify_control,
             spotify::spotify_open,
@@ -1091,6 +1095,8 @@ pub fn run() {
             create_settings_window(&handle);
             // Same rule for Mochi's desktop window and the dictation pill.
             desktop::setup(&handle);
+            // The MascotForge export the island loads (mascot.rs), and nothing else.
+            let _ = app.asset_protocol_scope().allow_directory(mascot::mascots_dir(), true);
             flow::setup(&handle);
             notes::setup(&handle);
 
