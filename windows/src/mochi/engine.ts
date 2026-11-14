@@ -8,7 +8,6 @@ import { Ease, lerp, type EaseFn } from "../core/anim";
 import { Sound } from "../core/sound";
 import type { BotEmoteName, BotStateName } from "../core/layout";
 import { PUMPKIN_BODY, drawOutfitBehind, drawOutfitFront, makeHead } from "./outfits";
-import { drawLionBody, getLionImages } from "./lion";
 import type { Outfit } from "./wardrobe";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -811,54 +810,39 @@ export class BotEngine {
       x.translate(-cx, -cy);
     }
 
-    // Dan the Lion: the main character is Darius's lion instead of Mochi.
-    // The state machine, badges and particles stay — only the body drawing
-    // changes. Minis keep their flat Mochi bodies, so each integration
-    // keeps its colour.
-    const lion = !this.isMini ? getLionImages() : null;
-
-    if (!lion) this.drawHandsBehind(x, R, rx, ry, cx, cy);
+    this.drawHandsBehind(x, R, rx, ry, cx, cy);
 
     x.save();
     x.translate(cx, cy);
     if (this.tilt !== 0) x.rotate(this.tilt);
     x.scale(this.sx, this.sy);
 
-    if (lion) {
-      drawLionBody(x, R, lion, {
-        state: this.state,
-        yaw: this.yaw,
-        pitch: this.pitch,
-        nowS: now(),
-      });
-    } else {
-      const dressed = !this.isMini && this.outfit !== "none";
-      const head = dressed ? makeHead(R, this.yaw, this.pitch, this.physDx, this.physDy) : null;
-      const outfitState = { presence: this.outfitPresence, morph: this.morph };
-      if (head) drawOutfitBehind(x, this.outfit, head, outfitState);
+    const dressed = !this.isMini && this.outfit !== "none";
+    const head = dressed ? makeHead(R, this.yaw, this.pitch, this.physDx, this.physDy) : null;
+    const outfitState = { presence: this.outfitPresence, morph: this.morph };
+    if (head) drawOutfitBehind(x, this.outfit, head, outfitState);
 
-      const body = this.bodyPath(rx, ry, R);
-      this.drawBody(x, body, R, rx, ry);
+    const body = this.bodyPath(rx, ry, R);
+    this.drawBody(x, body, R, rx, ry);
 
-      const blushVal = Math.max(this.blush, this.tint * 0.5) * (1 - this.morph);
-      if (blushVal > 0.01) {
-        x.save();
-        x.clip(body);
-        const yOffset = Math.sin(this.yaw) * rx * 0.8;
-        x.fillStyle = `rgba(255,120,150,${0.5 * blushVal})`;
-        for (const sd of [-1, 1]) {
-          x.beginPath();
-          x.ellipse(sd * rx * 0.55 + yOffset, ry * 0.2, R * 0.17, R * 0.1, 0, 0, Math.PI * 2);
-          x.fill();
-        }
-        x.restore();
+    const blushVal = Math.max(this.blush, this.tint * 0.5) * (1 - this.morph);
+    if (blushVal > 0.01) {
+      x.save();
+      x.clip(body);
+      const yOffset = Math.sin(this.yaw) * rx * 0.8;
+      x.fillStyle = `rgba(255,120,150,${0.5 * blushVal})`;
+      for (const sd of [-1, 1]) {
+        x.beginPath();
+        x.ellipse(sd * rx * 0.55 + yOffset, ry * 0.2, R * 0.17, R * 0.1, 0, 0, Math.PI * 2);
+        x.fill();
       }
-
-      this.drawEyes(x, body, R, rx, ry);
-      if (this.morph > 0.05) this.drawMouth(x, body, R);
-
-      if (head) drawOutfitFront(x, this.outfit, head, outfitState);
+      x.restore();
     }
+
+    this.drawEyes(x, body, R, rx, ry);
+    if (this.morph > 0.05) this.drawMouth(x, body, R);
+
+    if (head) drawOutfitFront(x, this.outfit, head, outfitState);
 
     x.restore();
     x.restore();

@@ -6,7 +6,6 @@
 import { closeCurve } from "../core/anim";
 import { Sound } from "../core/sound";
 import { COMPACT_W, NOTCH_H, NOTCH_W } from "../core/layout";
-import { getLionImages } from "./lion";
 
 // ── Timing (GT in the Swift file) ─────────────────────────────────────────────
 
@@ -454,18 +453,8 @@ function drawMochi(x: CanvasRenderingContext2D, p: Pose) {
   x.rotate(p.tilt);
   x.scale(p.sx, p.sy);
 
-  const lion = getLionImages();
-  if (lion) {
-    // Dan the Lion in the greeting: the lion drops in and bounces like
-    // Mochi did, fitted by height to Mochi's old body box. The halo and
-    // the activity badge below stay.
-    const H = p.hb * 1.2;
-    const W = H * (344 / 605);
-    x.drawImage(lion.corps, -W / 2, -H / 2, W, H);
-    x.drawImage(lion.coeur, -W / 2, -H / 2, W, H);
-  } else {
-    drawHandL(x, hw, hh, p);
-    drawHandR(x, hw, hh, p);
+  drawHandL(x, hw, hh, p);
+  drawHandR(x, hw, hh, p);
 
   const body = mochiPath(hw, hh);
   whiteFill(x, body, hw * 0.6, -hh, -hw * 0.6, hh);
@@ -511,7 +500,6 @@ function drawMochi(x: CanvasRenderingContext2D, p: Pose) {
     x.restore();
   }
   x.restore();
-  }
 
   // Activity badge
   if (p.badge > 0.01) {
