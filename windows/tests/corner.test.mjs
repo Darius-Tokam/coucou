@@ -55,3 +55,23 @@ test("a hover starts once while Rust keeps saying the pointer is there", async (
   hover.leave();
   assert.equal(hover.enter(1300), true);
 });
+
+test("a click on the folded mascot opens the card", async () => {
+  const { mascotClickAction } = await import("../src/island/corner.ts");
+  assert.equal(mascotClickAction({ open: false, pinned: false, approvalWaits: false }), "open");
+});
+
+test("a click on a hover-opened card pins it", async () => {
+  const { mascotClickAction } = await import("../src/island/corner.ts");
+  assert.equal(mascotClickAction({ open: true, pinned: false, approvalWaits: false }), "pin");
+});
+
+test("a click on a pinned card closes it", async () => {
+  const { mascotClickAction } = await import("../src/island/corner.ts");
+  assert.equal(mascotClickAction({ open: true, pinned: true, approvalWaits: false }), "close");
+});
+
+test("a waiting approval is never clicked out of sight", async () => {
+  const { mascotClickAction } = await import("../src/island/corner.ts");
+  assert.equal(mascotClickAction({ open: true, pinned: true, approvalWaits: true }), "none");
+});

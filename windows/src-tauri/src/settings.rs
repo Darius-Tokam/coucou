@@ -206,7 +206,8 @@ impl Default for Settings {
             show_clock: false,
             closed_island: "mochi".into(),
             agy_approvals_enabled: false,
-            island_anchor: "corner".into(),
+            // Corner mode is Windows only (island.rs corner_mode).
+            island_anchor: if cfg!(windows) { "corner" } else { "top" }.into(),
             corner_pos: None,
         }
     }
@@ -1046,7 +1047,7 @@ mod tests {
     #[test]
     fn the_mascot_sits_in_a_corner_by_default() {
         let settings = Settings::default();
-        assert_eq!(settings.island_anchor, "corner");
+        assert_eq!(settings.island_anchor, if cfg!(windows) { "corner" } else { "top" });
         assert_eq!(settings.corner_pos, None);
     }
 

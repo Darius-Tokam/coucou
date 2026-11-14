@@ -6,6 +6,23 @@
 
 import type { CornerLayout, Rect } from "../core/bridge";
 
+/** Corner mode exists on Windows only: gtk-layer-shell keeps the Linux island at the top. */
+export const CORNER_SUPPORTED =
+  typeof navigator !== "undefined" && /Windows/.test(navigator.userAgent ?? "");
+
+/** What a click on the corner mascot does. */
+export type MascotClick = "open" | "pin" | "close" | "none";
+
+/**
+ * Folded: open the card. Open by hover: keep it open. Pinned: close it,
+ * except while an approval waits: folding it would hide Allow / Deny.
+ */
+export function mascotClickAction(s: { open: boolean; pinned: boolean; approvalWaits: boolean }): MascotClick {
+  if (!s.open) return "open";
+  if (!s.pinned) return "pin";
+  return s.approvalWaits ? "none" : "close";
+}
+
 /** Side of the corner mascot, logical px (island.rs MASCOT_SIZE). */
 export const MASCOT_SIZE = 200;
 

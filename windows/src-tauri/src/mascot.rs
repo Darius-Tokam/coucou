@@ -7,6 +7,10 @@
 // there through the `mascot` protocol below. Tauri's asset protocol can't do:
 // it sends no Access-Control-Allow-Origin, and the 3D engine is an ES module,
 // which the webview only runs cross-origin with that header.
+//
+// The island shows it in an iframe whose page (FRAME_HTML) comes from that
+// protocol too: the export's scripts then run on the mascot origin, not the
+// island's, so they can't reach the island's window or its commands.
 
 use crate::platform;
 use serde::Serialize;
@@ -27,8 +31,58 @@ pub struct Served {
     pub body: Vec<u8>,
 }
 
+/// The iframe page: loads the export's mascot.js and its manifest, then plays
+/// the states the island posts. Talks to the island by postMessage only.
+pub const FRAME_PATH: &str = "__coucou_frame.html";
+const FRAME_HTML: &str = r#"<!doctype html>
+<html><head><meta charset="utf-8"><title>Coucou mascot</title>
+<style>
+:root { color-scheme: dark; }
+html, body { margin: 0; width: 100%; height: 100%; background: transparent; overflow: hidden; }
+mascot-avatar { display: block; width: 100%; height: 100%; }
+</style></head>
+<body>
+<script>
+(function () {
+  var avatar = null;
+  var wanted = null;
+  function tell(message) { window.parent.postMessage(message, "*"); }
+  function play() { if (avatar && wanted) avatar.play(wanted.state, { immediate: wanted.immediate }); }
+  window.addEventListener("message", function (event) {
+    if (event.source !== window.parent || !event.data || event.data.type !== "state") return;
+    wanted = { state: String(event.data.state), immediate: !!event.data.immediate };
+    play();
+  });
+  var script = document.createElement("script");
+  script.src = "mascot.js";
+  script.onerror = function () { tell({ type: "error", message: "mascot.js failed to load" }); };
+  script.onload = function () {
+    customElements.whenDefined("mascot-avatar").then(function () {
+      var el = document.createElement("mascot-avatar");
+      el.setAttribute("manifest", "manifest.json");
+      el.setAttribute("follow-cursor", "false");
+      document.body.appendChild(el);
+      return el.ready().then(function () { avatar = el; tell({ type: "ready" }); play(); });
+    }).catch(function (err) { tell({ type: "error", message: String(err) }); });
+  };
+  document.head.appendChild(script);
+})();
+</script>
+</body></html>
+"#;
+
 /// Answers `url_path` from the files under `root`, with an optional `Range` header.
 pub fn respond(root: &Path, url_path: &str, range: Option<&str>) -> Served {
+    if url_path.split(['?', '#']).next().unwrap_or("").trim_start_matches('/') == FRAME_PATH {
+        return Served {
+            status: 200,
+            headers: vec![
+                ("Content-Type", "text/html; charset=utf-8".to_string()),
+                ("Cache-Control", "no-store".to_string()),
+            ],
+            body: FRAME_HTML.as_bytes().to_vec(),
+        };
+    }
     let not_found = || Served { status: 404, headers: vec![("Access-Control-Allow-Origin", "*".into())], body: Vec::new() };
     let rel = percent_decode(url_path.split(['?', '#']).next().unwrap_or(""));
     let Some(file) = file_inside(root, rel.trim_start_matches('/')) else { return not_found() };
@@ -167,8 +221,11 @@ pub fn read_export(dir: &Path) -> Result<MascotInfo, ImportError> {
     let manifest_path = dir.join("manifest.json");
     let text = std::fs::read_to_string(&manifest_path).map_err(|_| ImportError::NotAnExport)?;
     let manifest: serde_json::Value = serde_json::from_str(&text).map_err(|_| ImportError::BadManifest)?;
-    if manifest.get("version").and_then(|v| v.as_u64()) != Some(2) {
-        return Err(ImportError::WrongVersion);
+    // No version at all: some other app's manifest.json (a web app, an extension).
+    match manifest.get("version").and_then(|v| v.as_u64()) {
+        None => return Err(ImportError::NotAnExport),
+        Some(2) => {}
+        Some(_) => return Err(ImportError::WrongVersion),
     }
     let script = file_inside(dir, "mascot.js").ok_or_else(|| ImportError::MissingFile("mascot.js".into()))?;
 
@@ -219,6 +276,8 @@ fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
 
 /// Copies `src` to `dest_root/current`, keeping the old one if anything fails.
 pub fn install(src: &Path, dest_root: &Path) -> Result<MascotInfo, ImportError> {
+    // Checked where it is first: nothing is copied from a folder that isn't an export.
+    read_export(src)?;
     let tmp = dest_root.join("current.tmp");
     let current = dest_root.join("current");
     let _ = std::fs::remove_dir_all(&tmp);
@@ -242,8 +301,9 @@ fn announce(app: &AppHandle, info: &Option<MascotInfo>) {
     let _ = app.emit("mascot-changed", info.clone());
 }
 
-/// Settings → Choose a MascotForge folder.
-#[tauri::command]
+/// Settings → Choose a MascotForge folder. Off the main thread: a copy must
+/// not freeze the island while an approval waits.
+#[tauri::command(async)]
 pub fn mascot_import(app: AppHandle, folder: String) -> Result<MascotInfo, String> {
     let src = find_export(Path::new(&folder)).ok_or_else(|| ImportError::NotAnExport.code().to_string())?;
     match install(&src, &mascots_dir()) {
@@ -454,6 +514,25 @@ mod tests {
         let root = scratch("serve-encoded");
         write(&root.join("videos/my clip.mp4"), "x");
         assert_eq!(respond(&root, "/videos/my%20clip.mp4", None).status, 200);
+    }
+
+    #[test]
+    fn a_web_app_manifest_is_not_an_export() {
+        let dir = scratch("pwa");
+        write(&dir.join("manifest.json"), r#"{"name":"My PWA","icons":[]}"#);
+        write(&dir.join("mascot.js"), "// not ours");
+        assert_eq!(read_export(&dir), Err(ImportError::NotAnExport));
+    }
+
+    #[test]
+    fn the_frame_page_comes_from_the_mascot_origin() {
+        let root = scratch("frame");
+        let served = respond(&root, "/__coucou_frame.html", None);
+        assert_eq!(served.status, 200);
+        assert_eq!(header(&served, "Content-Type"), Some("text/html; charset=utf-8"));
+        let page = String::from_utf8(served.body).unwrap();
+        assert!(page.contains("mascot-avatar"));
+        assert!(page.contains("color-scheme: dark"));
     }
 
     #[test]

@@ -195,30 +195,56 @@ fn set_collapsed(app: AppHandle, shared: State<Shared>, collapsed: bool, width: 
     platform::set_pointer_watch(!collapsed);
 }
 
-/// Corner mode, closed: the window is the mascot, so where it moves is where
-/// the mascot now lives. Saved once it has stayed put for half a second, so a
-/// drag writes settings.json once, not at every step.
+/// The page is about to drag the corner mascot (corner-view.ts): the moves
+/// that follow are the user's, not the window's own.
+static CORNER_DRAG: AtomicBool = AtomicBool::new(false);
+
+#[tauri::command]
+fn corner_drag_started() {
+    CORNER_DRAG.store(true, Ordering::Relaxed);
+}
+
+/// Corner mode, closed, during a drag: the window is the mascot, so where it
+/// moves is where the mascot now lives. Kept at once (opening the card right
+/// after the drop must use it), written to settings.json once it has stayed
+/// put for half a second. Moves the window makes itself (folding, Windows
+/// rehoming it when a display goes) are not the user's: never saved.
 fn corner_moved(app: &AppHandle, x: f64, y: f64) {
     let shared = app.state::<Shared>();
-    if !shared.gate.collapsed.load(Ordering::Relaxed) || shared.settings.lock().unwrap().island_anchor != "corner" {
+    if !CORNER_DRAG.load(Ordering::Relaxed)
+        || !shared.gate.collapsed.load(Ordering::Relaxed)
+        || island::corner_mode(app).is_none()
+    {
         return;
     }
+    shared.settings.lock().unwrap().corner_pos = Some(settings::CornerPos { x, y });
     static LATEST: Mutex<Option<(f64, f64)>> = Mutex::new(None);
-    *LATEST.lock().unwrap() = Some((x, y));
+    {
+        let mut latest = LATEST.lock().unwrap();
+        let first = latest.is_none();
+        *latest = Some((x, y));
+        if !first {
+            return; // the thread already waiting saves the last spot
+        }
+    }
     let app = app.clone();
     std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_millis(500));
-        if *LATEST.lock().unwrap() != Some((x, y)) {
-            return; // it moved again since
+        // Wait until the drag has stopped moving for half a second.
+        let mut seen = LATEST.lock().unwrap().unwrap_or((x, y));
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            let now = LATEST.lock().unwrap().unwrap_or(seen);
+            if now == seen {
+                break;
+            }
+            seen = now;
         }
+        *LATEST.lock().unwrap() = None;
+        CORNER_DRAG.store(false, Ordering::Relaxed);
         let shared = app.state::<Shared>();
         let settings = {
             let mut current = shared.settings.lock().unwrap();
-            let pos = Some(settings::CornerPos { x, y });
-            if current.corner_pos == pos {
-                return;
-            }
-            current.corner_pos = pos;
+            current.corner_pos = Some(settings::CornerPos { x: seen.0, y: seen.1 });
             current.clone()
         };
         if let Err(err) = settings::save(&settings) {
@@ -972,6 +998,7 @@ pub fn run() {
             set_collapsed,
             set_island_rect,
             set_island_rects,
+            corner_drag_started,
             focus_window,
             reposition,
             fit_zoom,

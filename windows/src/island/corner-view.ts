@@ -3,7 +3,7 @@
 // none. A transparent layer over it takes the mouse: hover, click, drag.
 
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import type { CornerLayout, MascotInfo } from "../core/bridge";
+import { Bridge, type CornerLayout, type MascotInfo } from "../core/bridge";
 import type { BotStateName } from "../core/layout";
 import { MascotHost } from "../mascot/host";
 import { playsImmediately, resolveMascotState } from "../mascot/states";
@@ -15,6 +15,8 @@ export interface CornerHandlers {
   enter(): void;
   leave(): void;
   click(): void;
+  /** A press: whatever a hover was about to open waits. */
+  press(): void;
   /** Only a closed corner can be dragged: the window is then the mascot. */
   canDrag(): boolean;
 }
@@ -27,6 +29,8 @@ export class CornerView {
   private readonly layer: HTMLDivElement;
   private readonly host: MascotHost;
   private info: MascotInfo | null = null;
+  /** The export failed to load: Mochi stands in until another is chosen. */
+  private failed = false;
   private enabled = false;
   private state: BotStateName = "idle";
 
@@ -48,6 +52,13 @@ export class CornerView {
     root.append(this.box);
     // The iframe it adds stays under the mouse layer (z-index in style.css).
     this.host = new MascotHost(this.box);
+    this.host.onError = (message) => {
+      void Bridge.log(`mascot failed to load, Mochi stands in: ${message}`);
+      this.failed = true;
+      this.host.load(null);
+      this.refresh();
+      this.play();
+    };
     this.wireInput();
   }
 
@@ -71,6 +82,7 @@ export class CornerView {
   /** The MascotForge export to show, or null for Mochi. */
   load(info: MascotInfo | null) {
     this.info = info;
+    this.failed = false;
     this.host.load(info);
     this.refresh();
     this.play();
@@ -83,7 +95,7 @@ export class CornerView {
   }
 
   private play() {
-    if (this.info) {
+    if (this.info && !this.failed) {
       this.host.play(resolveMascotState(this.state, this.info.states, this.info.defaultState), playsImmediately(this.state));
     } else {
       this.mochi.setState(this.state);
@@ -92,7 +104,7 @@ export class CornerView {
 
   /** Mochi draws only when he is the one shown. */
   private refresh() {
-    const mochiShown = this.enabled && !this.info;
+    const mochiShown = this.enabled && (!this.info || this.failed);
     this.mochiCanvas.style.display = mochiShown ? "block" : "none";
     if (mochiShown) this.scheduleMochi();
     else if (this.mochiTimer != null) {
@@ -107,7 +119,7 @@ export class CornerView {
     this.mochiTimer = window.setTimeout(() => {
       requestAnimationFrame((now) => {
         this.mochiTimer = null;
-        if (!this.enabled || this.info) return;
+        if (!this.enabled || (this.info && !this.failed)) return;
         this.drawMochi(now);
         this.scheduleMochi();
       });
@@ -138,14 +150,16 @@ export class CornerView {
     this.layer.addEventListener("pointerenter", () => this.handlers.enter());
     this.layer.addEventListener("pointerleave", () => this.handlers.leave());
     this.layer.addEventListener("pointerdown", (e) => {
-      if (e.button === 0) this.press = { x: e.clientX, y: e.clientY };
+      if (e.button !== 0) return;
+      this.press = { x: e.clientX, y: e.clientY };
+      this.handlers.press();
     });
     this.layer.addEventListener("pointermove", (e) => {
       if (!this.press || (e.buttons & 1) === 0) return;
       const moved = Math.hypot(e.clientX - this.press.x, e.clientY - this.press.y);
       if (moved < DRAG_THRESHOLD || !this.handlers.canDrag()) return;
       this.press = null;
-      void getCurrentWindow().startDragging();
+      void Bridge.cornerDragStarted().then(() => getCurrentWindow().startDragging());
     });
     this.layer.addEventListener("pointerup", (e) => {
       if (this.press && e.button === 0) this.handlers.click();

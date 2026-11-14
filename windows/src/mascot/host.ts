@@ -15,7 +15,7 @@ export class MascotHost {
 
   constructor(private readonly container: HTMLElement) {
     window.addEventListener("message", (event: MessageEvent<FrameMessage>) => {
-      if (!this.frame || event.source !== this.frame.contentWindow) return;
+      if (!this.frame || event.source !== this.frame.contentWindow || event.origin !== this.origin) return;
       if (event.data.type === "ready") {
         this.ready = true;
         if (this.wanted) this.send({ type: "state", ...this.wanted });
@@ -30,26 +30,24 @@ export class MascotHost {
     return this.frame !== null;
   }
 
+  /** Where the iframe's page comes from: the `mascot` protocol's origin. */
+  private origin = "";
+
   /** Shows `info`, or removes the mascot when null. Always a fresh document. */
   load(info: MascotInfo | null): void {
     this.frame?.remove();
     this.frame = null;
     this.ready = false;
     if (!info) return;
+    this.origin = new URL(info.baseUrl).origin;
 
     const frame = document.createElement("iframe");
     frame.className = "mascot-frame";
     frame.title = info.name;
     frame.style.cssText =
       "position:absolute;inset:0;width:100%;height:100%;border:0;background:transparent;pointer-events:none;";
-    frame.src = `/mascot-frame.html?v=${++this.loads}`;
-    frame.addEventListener("load", () => {
-      this.send({
-        type: "load",
-        manifestUrl: `${info.baseUrl}manifest.json`,
-        scriptUrl: `${info.baseUrl}mascot.js`,
-      });
-    });
+    // Its own origin: the export's scripts can't reach this window or Tauri.
+    frame.src = `${info.baseUrl}__coucou_frame.html?v=${++this.loads}`;
     this.frame = frame;
     this.container.appendChild(frame);
   }
@@ -61,6 +59,6 @@ export class MascotHost {
   }
 
   private send(message: HostMessage): void {
-    this.frame?.contentWindow?.postMessage(message, window.location.origin);
+    if (this.origin) this.frame?.contentWindow?.postMessage(message, this.origin);
   }
 }

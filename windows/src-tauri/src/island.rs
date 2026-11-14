@@ -90,8 +90,11 @@ pub fn corner_layout(work: IslandRect, scale: f64, mascot_at: Option<(f64, f64)>
     let margin = CORNER_MARGIN * scale;
     let (right, bottom) = (work.x + work.w, work.y + work.h);
     let home = (right - margin - size, bottom - margin - size);
+    // Partly off the work area (dropped over the taskbar): pulled back in.
+    // Nowhere on it (its screen is gone): home.
     let (mx, my) = mascot_at
-        .filter(|&(x, y)| x >= work.x && y >= work.y && x + size <= right && y + size <= bottom)
+        .filter(|&(x, y)| x + size > work.x && y + size > work.y && x < right && y < bottom)
+        .map(|(x, y)| (x.min(right - size).max(work.x), y.min(bottom - size).max(work.y)))
         .unwrap_or(home);
     let mascot = IslandRect { x: mx, y: my, w: size, h: size };
 
@@ -131,6 +134,27 @@ fn bounding(rects: &[IslandRect]) -> IslandRect {
     let x1 = drawn.iter().map(|r| r.x + r.w).fold(f64::NEG_INFINITY, f64::max);
     let y1 = drawn.iter().map(|r| r.y + r.h).fold(f64::NEG_INFINITY, f64::max);
     IslandRect { x: x0, y: y0, w: x1 - x0, h: y1 - y0 }
+}
+
+/// The work area the mascot at `at` (physical top-left) is on; `fallback`
+/// (the screen chosen in Settings) when it is on none.
+pub fn pick_work(works: &[IslandRect], fallback: IslandRect, at: Option<(f64, f64)>) -> IslandRect {
+    let Some((x, y)) = at else { return fallback };
+    works
+        .iter()
+        .copied()
+        .find(|w| x >= w.x && y >= w.y && x < w.x + w.w && y < w.y + w.h)
+        .unwrap_or(fallback)
+}
+
+fn work_of(m: &Monitor) -> IslandRect {
+    let area = m.work_area();
+    IslandRect {
+        x: area.position.x as f64,
+        y: area.position.y as f64,
+        w: area.size.width as f64,
+        h: area.size.height as f64,
+    }
 }
 
 /// Whether window-logical (x, y) is on one of `rects`, give or take HIT_MARGIN.
@@ -558,7 +582,11 @@ pub fn apply_geometry(app: &AppHandle, pref: &str, collapsed: Option<(f64, f64)>
 
 /// In corner mode, where the user left the mascot (None: the default corner);
 /// None outside corner mode.
-fn corner_mode(app: &AppHandle) -> Option<Option<(f64, f64)>> {
+pub fn corner_mode(app: &AppHandle) -> Option<Option<(f64, f64)>> {
+    // Linux anchors the island with gtk-layer-shell, which can't place it in a corner.
+    if !cfg!(windows) {
+        return None;
+    }
     let shared = app.try_state::<crate::Shared>()?;
     let settings = shared.settings.lock().unwrap();
     (settings.island_anchor == "corner").then(|| settings.corner_pos.map(|p| (p.x, p.y)))
@@ -567,14 +595,16 @@ fn corner_mode(app: &AppHandle) -> Option<Option<(f64, f64)>> {
 /// Corner mode: the mascot alone, or the mascot and the panel beside it.
 /// The page hears where each sits through `corner-layout`.
 fn apply_corner(win: &WebviewWindow, m: &Monitor, corner_pos: Option<(f64, f64)>, open: bool) {
-    let area = m.work_area();
-    let work = IslandRect {
-        x: area.position.x as f64,
-        y: area.position.y as f64,
-        w: area.size.width as f64,
-        h: area.size.height as f64,
-    };
-    let layout = corner_layout(work, m.scale_factor(), corner_pos, open.then_some((PANEL_W, PANEL_H)));
+    // The screen the mascot was dropped on, whichever that is.
+    let monitors = win.available_monitors().unwrap_or_default();
+    let works: Vec<IslandRect> = monitors.iter().map(work_of).collect();
+    let work = pick_work(&works, work_of(m), corner_pos);
+    let scale = monitors
+        .iter()
+        .find(|other| work_of(other) == work)
+        .map(|other| other.scale_factor())
+        .unwrap_or_else(|| m.scale_factor());
+    let layout = corner_layout(work, scale, corner_pos, open.then_some((PANEL_W, PANEL_H)));
     let w = layout.window;
     let _ = win.set_size(PhysicalSize::new(w.w.round() as u32, w.h.round() as u32));
     let _ = win.set_position(PhysicalPosition::new(w.x.round() as i32, w.y.round() as i32));
@@ -618,12 +648,27 @@ pub fn spawn_cursor_poll(app: AppHandle, gate: Arc<PollGate>) {
             // Parked. Folded on Windows, a glance at the cursor four times a
             // second: on the closed island, it is told to wake up, whether or
             // not the webview delivers the pointer to such a small window.
+            let mut parked_ticks: u32 = 0;
             loop {
                 if gate.wait_active_for(Duration::from_millis(250)) {
                     break;
                 }
                 if platform::CURSOR_POLL && gate.collapsed.load(Ordering::Relaxed) {
                     wake_if_hovered(&app, &gate);
+                }
+                // A corner mascot is folded nearly all the time: displays that
+                // come and go are watched from here too, every 2 s.
+                parked_ticks = parked_ticks.wrapping_add(1);
+                if parked_ticks % 8 == 0 && corner_mode(&app).is_some() {
+                    let now = current_screen_key(&app);
+                    if now.is_some() && now != last_screen {
+                        let first = last_screen.is_none();
+                        last_screen = now;
+                        if !first {
+                            crate::log::line("display layout changed (corner) — repositioning".to_string());
+                            let _ = app.emit_to(WINDOW_LABEL, "screen-changed", ());
+                        }
+                    }
                 }
             }
             let mut last = (f64::MIN, f64::MIN);
@@ -835,6 +880,20 @@ mod corner_tests {
         assert_eq!(layout.window.w, 400.0);
         assert_eq!(layout.mascot.w, 200.0);
         assert_eq!(layout.window.x, 3840.0 - 32.0 - 400.0);
+    }
+
+    #[test]
+    fn a_mascot_over_the_edge_is_pulled_back_in() {
+        let layout = corner_layout(WORK, 1.0, Some((1800.0, 900.0)), None);
+        assert_eq!(layout.window, rect(1720.0, 840.0, 200.0, 200.0));
+    }
+
+    #[test]
+    fn the_mascot_keeps_its_own_screen() {
+        let left = rect(-1920.0, 0.0, 1920.0, 1040.0);
+        assert_eq!(pick_work(&[WORK, left], WORK, Some((-600.0, 300.0))), left);
+        assert_eq!(pick_work(&[WORK, left], WORK, Some((5000.0, 5000.0))), WORK);
+        assert_eq!(pick_work(&[WORK, left], WORK, None), WORK);
     }
 
     #[test]

@@ -270,6 +270,9 @@ export const Bridge = {
   setIslandRect: (x: number, y: number, width: number, height: number) =>
     call<void>("set_island_rect", { x, y, width, height }),
 
+  /** Corner mode: the page starts dragging the mascot; Rust keeps where it lands. */
+  cornerDragStarted: () => call<void>("corner_drag_started"),
+
   /** Corner mode: every rect that takes the mouse (the mascot, the open panel). */
   setIslandRects: (rects: Rect[]) => call<void>("set_island_rects", { rects }),
 

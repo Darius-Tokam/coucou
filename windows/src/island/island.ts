@@ -33,7 +33,9 @@ import { IslandStateMachine } from "./fsm";
 import { refreshHookPills } from "./integrations";
 import { restoreAlertFocus } from "./hooks";
 import { DesktopLink } from "./desktop";
-import { CORNER_HOVER_CLOSE_S, HoverStart, MASCOT_SIZE, cornerRects, placeInPanel } from "./corner";
+import {
+  CORNER_HOVER_CLOSE_S, CORNER_SUPPORTED, HoverStart, MASCOT_SIZE, cornerRects, mascotClickAction, placeInPanel,
+} from "./corner";
 import { CornerView } from "./corner-view";
 import type { ViewCommand } from "./shortcuts";
 import { DRAG_THRESHOLD } from "../mochi/desktop-logic";
@@ -420,6 +422,10 @@ export class Island {
         if (this.collapsed) this.fsm.mouseLeft();
       },
       click: () => this.clickMascot(),
+      // A press may start a drag: a hover-open landing mid-drag would move the window under it.
+      press: () => {
+        if (this.collapsed) this.fsm.mouseLeft();
+      },
       canDrag: () => this.collapsed,
     });
     this.applyGeometry();
@@ -963,7 +969,7 @@ export class Island {
 
   /** Settings → Where Coucou lives → In a corner of the screen. */
   private get cornerMode(): boolean {
-    return State.settings.islandAnchor === "corner";
+    return CORNER_SUPPORTED && State.settings.islandAnchor === "corner";
   }
 
   /** Corner mode folds the window to the mascot whenever the card isn't open. */
@@ -975,13 +981,19 @@ export class Island {
   private clickMascot() {
     Sound.resume();
     State.lastActivity = performance.now();
-    if (State.mode === "expanded" && this.fsm.pinned) {
+    const action = mascotClickAction({
+      open: State.mode === "expanded",
+      pinned: this.fsm.pinned,
+      approvalWaits: State.pendingApproval != null,
+    });
+    if (action === "none") return;
+    if (action === "close") {
       this.collapse();
       return;
     }
     this.fsm.pinned = true;
     State.isPinned = true;
-    if (State.mode === "expanded") this.fsm.userInteracted();
+    if (action === "pin") this.fsm.userInteracted();
     else this.fsm.forceHome();
   }
 
@@ -1052,6 +1064,12 @@ export class Island {
     if (!this.folded()) return;
     // Folded in a corner, Rust repeats this while the pointer stays: once is enough.
     if (this.cornerMode && !this.cornerHover.enter(performance.now())) return;
+    // A folded card that waits for Allow / Deny opens at once, pinned or not.
+    if (this.cornerMode && State.pendingApproval) {
+      Sound.resume();
+      this.fsm.forceHome();
+      return;
+    }
     Sound.resume();
     this.fsm.mouseEntered();
   }
@@ -1241,6 +1259,9 @@ export class Island {
     const onMascot = mascot != null &&
       x >= mascot.x - HIT_MARGIN && x <= mascot.x + mascot.w + HIT_MARGIN &&
       y >= mascot.y - HIT_MARGIN && y <= mascot.y + mascot.h + HIT_MARGIN;
+    // While the card is open the poll reports the pointer: a stay on the mascot
+    // carries on, so a click that folds the card doesn't start a new hover.
+    if (onMascot) this.cornerHover.enter(performance.now());
     const inIsland = onMascot || (
       x >= rect.x - HIT_MARGIN && x <= rect.x + rect.w + HIT_MARGIN &&
       y >= rect.y - HIT_MARGIN && y <= rect.y + rect.h + HIT_MARGIN);
