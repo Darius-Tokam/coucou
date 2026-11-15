@@ -82,8 +82,85 @@ mascot-avatar { display: block; width: 100%; height: 100%; }
 (function () {
   var avatar = null;
   var wanted = null;
+  var paused = false;
+  var blobPausedByCoucou = false;
+  var videoPausedByCoucou = false;
+  var videoRenderingPaused = false;
+  var pauseFrame = null;
+  var searchParams = new URLSearchParams(window.location.search);
+  var mini = searchParams.get("mini") === "1";
   function tell(message) { window.parent.postMessage(message, "*"); }
   function play() { if (avatar && wanted) avatar.play(wanted.state, { immediate: wanted.immediate }); }
+  function engine(tag) {
+    return avatar && avatar.shadowRoot ? avatar.shadowRoot.querySelector(tag) : null;
+  }
+  function configureMini() {
+    if (!mini) return;
+    var wobnimo = engine("wobnimo-mascot");
+    if (wobnimo && wobnimo.instance) wobnimo.instance.options.maxPixelRatio = 1;
+    // Blob Atelier's public low-cost mode also lowers its optional 3D resolution.
+    if (window.AgentMascot) window.AgentMascot.lite = true;
+  }
+  function activeVideo() {
+    return avatar && avatar.shadowRoot ? avatar.shadowRoot.querySelector("video.active") : null;
+  }
+  function resumeVideo(video) {
+    var request = video.play();
+    if (request && typeof request.catch === "function") request.catch(function () {});
+  }
+  function applyPaused() {
+    if (!avatar) return;
+    var wobnimo = engine("wobnimo-mascot");
+    if (wobnimo && wobnimo.instance) {
+      if (paused) wobnimo.instance.pause();
+      else wobnimo.instance.play();
+    }
+    var blob = engine("agent-mascot");
+    if (blob) {
+      if (paused && !blob.hasAttribute("still")) {
+        blob.setAttribute("still", "");
+        blobPausedByCoucou = true;
+      } else if (!paused && blobPausedByCoucou) {
+        blob.removeAttribute("still");
+        blobPausedByCoucou = false;
+      }
+    }
+    if (!wobnimo && !blob) {
+      var video = activeVideo();
+      if (paused) {
+        if (video && !video.paused) {
+          video.pause();
+          videoPausedByCoucou = true;
+        }
+        if (avatar._raf !== null && avatar._raf !== undefined) {
+          cancelAnimationFrame(avatar._raf);
+          avatar._raf = null;
+          videoRenderingPaused = true;
+        }
+      } else {
+        if (videoPausedByCoucou && video) resumeVideo(video);
+        videoPausedByCoucou = false;
+        if (videoRenderingPaused && typeof avatar._startRendering === "function") {
+          avatar._startRendering();
+        }
+        videoRenderingPaused = false;
+      }
+    }
+  }
+  function syncPaused() {
+    if (!paused) {
+      if (pauseFrame !== null) clearTimeout(pauseFrame);
+      pauseFrame = null;
+      applyPaused();
+      return;
+    }
+    if (pauseFrame !== null) return;
+    // Let the engine settle into its sleeping pose (eyes closing) before freezing it.
+    pauseFrame = setTimeout(function () {
+      pauseFrame = null;
+      if (paused) applyPaused();
+    }, 1500);
+  }
   // The engine's canvas, wherever it sits in the shadow roots (none for a video).
   function canvasIn(root) {
     var all = root.querySelectorAll("*");
@@ -99,6 +176,9 @@ mascot-avatar { display: block; width: 100%; height: 100%; }
     if (data.type === "state") {
       wanted = { state: String(data.state), immediate: !!data.immediate };
       play();
+    } else if (data.type === "pause") {
+      paused = !!data.paused;
+      syncPaused();
     } else if (data.type === "pointer") {
       // The island is the one that sees the mouse: it is replayed here, where
       // the engine listens for it (and looks at the cursor).
@@ -121,7 +201,13 @@ mascot-avatar { display: block; width: 100%; height: 100%; }
       el.setAttribute("manifest", "manifest.json");
       el.setAttribute("parallax", "false");
       document.body.appendChild(el);
-      return el.ready().then(function () { avatar = el; tell({ type: "ready" }); play(); });
+      return el.ready().then(function () {
+        avatar = el;
+        configureMini();
+        syncPaused();
+        tell({ type: "ready" });
+        play();
+      });
     }).catch(function (err) { tell({ type: "error", message: String(err) }); });
   };
   document.head.appendChild(script);
@@ -698,20 +784,20 @@ mod tests {
     }
 
     #[test]
-    fn the_frame_page_handles_pause_and_mini_mode() {
-        let root = scratch("frame-pause");
-        let page = String::from_utf8(respond(&root, "/__coucou_frame.html?mini=1", None).body).unwrap();
-        assert!(page.contains(r#"data.type === "pause""#));
-        assert!(page.contains(r#"searchParams.get("mini")"#));
-    }
-
-    #[test]
     fn the_frame_page_lets_the_mascot_see_the_cursor_and_the_clicks() {
         let root = scratch("frame-input");
         let page = String::from_utf8(respond(&root, "/__coucou_frame.html", None).body).unwrap();
         assert!(!page.contains(r#"setAttribute("follow-cursor", "false")"#), "the engine must track the cursor");
         assert!(page.contains(r#""pointer""#) && page.contains("pointermove"));
         assert!(page.contains(r#""poke""#));
+    }
+
+    #[test]
+    fn the_frame_page_handles_pause_and_mini_mode() {
+        let root = scratch("frame-pause");
+        let page = String::from_utf8(respond(&root, "/__coucou_frame.html?mini=1", None).body).unwrap();
+        assert!(page.contains(r#"data.type === "pause""#));
+        assert!(page.contains(r#"searchParams.get("mini")"#));
     }
 
     #[test]
