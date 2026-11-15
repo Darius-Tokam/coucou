@@ -79,6 +79,11 @@ Les petites mascottes existent, mais toutes les mascottes de sous-agents se ress
 - Les étapes sont gardées dans le modèle des mascottes (`agents.ts`), par sous-agent, 50 au plus, et partent avec lui.
 - Une autorisation demandée par ce sous-agent garde la priorité : si elle attend, le clic montre la carte d'autorisation, comme aujourd'hui.
 - Un clic sur la mascotte d'une session ouvre toujours l'onglet de sa session.
+- **Le panneau de la fiche s'ouvre à côté de la petite mascotte cliquée** (choix de Darius, option 1 du 2026-11-15), pas à côté de la grande. C'est le même panneau, déplacé :
+  - petite mascotte dans la file : le panneau reste au-dessus (ou en dessous) du groupe grande mascotte + file, comme aujourd'hui, mais centré horizontalement sur la petite mascotte, et ramené dans la zone de travail ;
+  - petite mascotte posée ailleurs : le panneau s'ouvre juste au-dessus d'elle si elle est dans la moitié basse de l'écran, juste en dessous sinon, à 8 px, centré sur elle, ramené dans la zone de travail, sans la couvrir.
+  - Si le sous-agent part pendant que sa fiche est ouverte, le panneau reste où il est jusqu'à sa fermeture.
+  - Toutes les autres vues gardent le placement actuel, à côté de la grande mascotte.
 
 ### Réglages
 

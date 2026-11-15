@@ -146,3 +146,16 @@
 
 - [ ] **Step 1: Tests Rust** : `a smaller big mascot keeps its top left` (taille 160, `mascot_at = Some((1000.0, 500.0))` : la mascotte écran vaut `rect(1000, 500, 160, 160)`) ; `a smaller big mascot at home sits in the corner` (taille 160, pas de position : `rect(1744, 864, 160, 160)` sur 1920 x 1040) ; `mascot_size_is_clamped` (300 lu comme 240, 50 comme 120) ; anciens appels adaptés avec `240.0`. Pousser seuls : CI rouge.
 - [ ] **Step 2:** Implémenter Rust et page ; test TS de la section Réglages (`mascot-settings.test.mjs` : le curseur existe) ; CI verte.
+
+### Task 10: Le panneau de la fiche s'ouvre à côté de la petite mascotte (ajout du 2026-11-15)
+
+**Files:** Modify `src-tauri/src/island.rs` (`corner_layout`, `apply_corner`, `corner_tests`), `src-tauri/src/lib.rs` (commande), `src/core/bridge.ts`, `src/island/island.ts` (`openSubagent`, `closeSubagent`).
+
+**Interfaces:**
+- `corner_layout(work, scale, mascot_at, panel, minis, dragging, mascot_size, panel_anchor: Option<IslandRect>)` : `panel_anchor` est le rectangle écran, en pixels physiques, de la petite mascotte dont la fiche est ouverte ; `None` : placement actuel.
+- Règle : si l'ancre est dans le bloc grande mascotte + file, le panneau garde son placement vertical actuel (au-dessus ou en dessous du bloc) mais son `x` est centré sur l'ancre puis ramené dans la zone de travail. Sinon (mascotte posée), le panneau est au-dessus de l'ancre (`y = ancre.y - 8 - h`) si l'ancre est dans la moitié basse de la zone de travail, en dessous sinon (`y = ancre.y + ancre.h + 8`), `x` centré sur l'ancre, puis ramené dans la zone de travail.
+- `static CORNER_PANEL_ANCHOR: Mutex<Option<IslandRect>>` lu par `apply_corner` ; commande `corner_panel_anchor(app, shared, anchor: Option<IslandRect>)` qui le range puis refait la géométrie ; `Bridge.cornerPanelAnchor(anchor: Rect | null)`.
+- Page : `openSubagent(key)` envoie le rectangle écran de la case (`layout.window.x + mini.x * layout.scale`, idem pour `y`, `w`, `h`) avant d'ouvrir ; `closeSubagent()` envoie `null`. Si le sous-agent part, l'ancre n'est pas effacée tant que la fiche est ouverte.
+
+- [ ] **Step 1: Tests Rust** (valeurs pour `WORK` 1920 x 1040, grande mascotte de 240 à la maison, 3 cases de 120 en file, panneau 720 x 320) : `a subagent card opens above the line, centred on its mascot` (ancre = troisième case, écran `(1280, 904, 120, 120)` : panneau écran `(980, 456, 720, 320)`) ; `a subagent card opens below a placed mascot near the top` (ancre posée `(100, 100, 120, 120)` : panneau écran `(0, 228, 720, 320)`) ; `no anchor keeps the old placement` (les tests existants passent `None`). Pousser seuls : CI rouge.
+- [ ] **Step 2:** Implémenter Rust et page ; CI verte ; vérification dans l'app (capture d'une fiche ouverte à côté d'une petite mascotte en file et d'une posée).
