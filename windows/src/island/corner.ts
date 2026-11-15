@@ -64,6 +64,12 @@ export function mascotPointer(layout: CornerLayout, x: number, y: number): { x: 
 
 /** Side of the corner mascot's box, logical px (island.rs MASCOT_SIZE). */
 export const MASCOT_SIZE = 240;
+const MIN_MASCOT_SIZE = 120;
+
+export function clampMascotSize(size: number): number {
+  if (!Number.isFinite(size)) return MASCOT_SIZE;
+  return Math.min(MASCOT_SIZE, Math.max(MIN_MASCOT_SIZE, size));
+}
 
 /** Seconds before the open card folds once the pointer has left it and the mascot. */
 export const CORNER_HOVER_CLOSE_S = 0.3;

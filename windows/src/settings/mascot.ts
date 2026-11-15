@@ -4,6 +4,7 @@ import { Bridge, onEvent, type MascotChanged, type MascotInfo, type MascotSlot }
 import type { Settings, SubagentLook } from "../core/state";
 import { t } from "../i18n/i18n";
 import { colorForType } from "../mascot/agents";
+import { MASCOT_SIZE, clampMascotSize } from "../island/corner";
 import { h } from "../views/dom";
 import { importErrorText } from "./mascot-errors";
 
@@ -174,6 +175,22 @@ export function mascotSection(
     void persist();
   });
 
+  const mascotSize = h("input", {
+    type: "range",
+    min: "120",
+    max: "240",
+    step: "20",
+  }) as HTMLInputElement;
+  mascotSize.value = String(clampMascotSize(settings().mascotSize ?? MASCOT_SIZE));
+  const mascotSizeValue = h("span", { class: "hint", text: `${mascotSize.value} px` });
+  mascotSize.addEventListener("input", () => {
+    mascotSizeValue.textContent = `${mascotSize.value} px`;
+  });
+  mascotSize.addEventListener("change", () => {
+    settings().mascotSize = clampMascotSize(Number(mascotSize.value));
+    void persist();
+  });
+
   const display = h("select") as HTMLSelectElement;
   display.append(
     h("option", { value: "all", text: t("Sessions and subagents") }),
@@ -288,6 +305,7 @@ export function mascotSection(
     claude,
     codex,
     h("div", { class: "hint", text: t("Without a Codex mascot, Codex agents use the Claude Code one.") }),
+    h("div", { class: "row" }, h("label", { text: t("Size of the big mascot") }), mascotSize, mascotSizeValue),
     h("div", { class: "row" }, h("label", { text: t("Size of the small mascots") }), size, sizeValue),
     h("div", { class: "row" }, h("label", { text: t("Small mascots") }), display),
     h("h3", { text: t("Subagent colors") }),

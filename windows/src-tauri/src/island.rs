@@ -1128,7 +1128,7 @@ mod corner_tests {
 
     #[test]
     fn the_mascot_starts_bottom_right() {
-        let layout = corner_layout(WORK, 1.0, None, None, &[], false);
+        let layout = corner_layout(WORK, 1.0, None, None, &[], false, 240.0);
         assert_eq!(layout.window, rect(1664.0, 784.0, 240.0, 240.0));
         assert_eq!(layout.mascot, rect(0.0, 0.0, 240.0, 240.0));
         assert_eq!(layout.panel, None);
@@ -1136,7 +1136,7 @@ mod corner_tests {
 
     #[test]
     fn the_panel_opens_toward_the_centre() {
-        let layout = corner_layout(WORK, 1.0, None, Some((720.0, 320.0)), &[], false);
+        let layout = corner_layout(WORK, 1.0, None, Some((720.0, 320.0)), &[], false, 240.0);
         assert_eq!(layout.window, rect(944.0, 704.0, 960.0, 320.0));
         assert_eq!(layout.panel, Some(rect(0.0, 0.0, 720.0, 320.0)));
         assert_eq!(layout.mascot, rect(720.0, 80.0, 240.0, 240.0));
@@ -1146,7 +1146,7 @@ mod corner_tests {
 
     #[test]
     fn a_top_left_mascot_opens_right_and_down() {
-        let layout = corner_layout(WORK, 1.0, Some((16.0, 16.0)), Some((720.0, 320.0)), &[], false);
+        let layout = corner_layout(WORK, 1.0, Some((16.0, 16.0)), Some((720.0, 320.0)), &[], false, 240.0);
         assert_eq!(layout.window, rect(16.0, 16.0, 960.0, 320.0));
         assert_eq!(layout.mascot, rect(0.0, 0.0, 240.0, 240.0));
         assert_eq!(layout.panel, Some(rect(240.0, 0.0, 720.0, 320.0)));
@@ -1155,7 +1155,7 @@ mod corner_tests {
     #[test]
     fn the_panel_stays_on_screen() {
         let short = rect(0.0, 0.0, 1920.0, 360.0);
-        let layout = corner_layout(short, 1.0, Some((1664.0, 70.0)), Some((720.0, 320.0)), &[], false);
+        let layout = corner_layout(short, 1.0, Some((1664.0, 70.0)), Some((720.0, 320.0)), &[], false, 240.0);
         // Upward would put the panel at y = -10: it comes down to the top of the work area.
         assert_eq!(layout.window.y, 0.0);
         assert_eq!(layout.panel.map(|p| p.y), Some(0.0));
@@ -1164,14 +1164,14 @@ mod corner_tests {
 
     #[test]
     fn a_lost_screen_sends_the_mascot_home() {
-        let layout = corner_layout(WORK, 1.0, Some((5000.0, 5000.0)), None, &[], false);
+        let layout = corner_layout(WORK, 1.0, Some((5000.0, 5000.0)), None, &[], false, 240.0);
         assert_eq!(layout.window, rect(1664.0, 784.0, 240.0, 240.0));
     }
 
     #[test]
     fn scale_two_doubles_the_window() {
         let work = rect(0.0, 0.0, 3840.0, 2080.0);
-        let layout = corner_layout(work, 2.0, None, None, &[], false);
+        let layout = corner_layout(work, 2.0, None, None, &[], false, 240.0);
         assert_eq!(layout.window.w, 480.0);
         assert_eq!(layout.mascot.w, 240.0);
         assert_eq!(layout.window.x, 3840.0 - 32.0 - 480.0);
@@ -1179,13 +1179,35 @@ mod corner_tests {
 
     #[test]
     fn a_mascot_over_the_edge_is_pulled_back_in() {
-        let layout = corner_layout(WORK, 1.0, Some((1800.0, 900.0)), None, &[], false);
+        let layout = corner_layout(WORK, 1.0, Some((1800.0, 900.0)), None, &[], false, 240.0);
         assert_eq!(layout.window, rect(1680.0, 800.0, 240.0, 240.0));
     }
 
     #[test]
+    fn a_smaller_big_mascot_keeps_its_top_left() {
+        let layout = corner_layout(
+            WORK,
+            1.0,
+            Some((1000.0, 500.0)),
+            None,
+            &[],
+            false,
+            160.0,
+        );
+
+        assert_eq!(on_screen(layout.window, layout.mascot), rect(1000.0, 500.0, 160.0, 160.0));
+    }
+
+    #[test]
+    fn a_smaller_big_mascot_at_home_sits_in_the_corner() {
+        let layout = corner_layout(WORK, 1.0, None, None, &[], false, 160.0);
+
+        assert_eq!(on_screen(layout.window, layout.mascot), rect(1744.0, 864.0, 160.0, 160.0));
+    }
+
+    #[test]
     fn minis_line_up_toward_the_centre() {
-        let layout = corner_layout(WORK, 1.0, None, None, &[MiniSlot { size: 120.0, at: None }; 3], false);
+        let layout = corner_layout(WORK, 1.0, None, None, &[MiniSlot { size: 120.0, at: None }; 3], false, 240.0);
         assert_eq!(layout.window, rect(1280.0, 784.0, 624.0, 240.0));
         assert_eq!(layout.mascot, rect(384.0, 0.0, 240.0, 240.0));
         assert_eq!(
@@ -1201,7 +1223,7 @@ mod corner_tests {
     #[test]
     fn minis_wrap_on_a_narrow_screen() {
         let work = rect(0.0, 0.0, 800.0, 600.0);
-        let layout = corner_layout(work, 1.0, None, None, &[MiniSlot { size: 120.0, at: None }; 6], false);
+        let layout = corner_layout(work, 1.0, None, None, &[MiniSlot { size: 120.0, at: None }; 6], false, 240.0);
         let mascot = on_screen(layout.window, layout.mascot);
         let mut rows = Vec::new();
 
@@ -1226,6 +1248,7 @@ mod corner_tests {
             Some((720.0, 320.0)),
             &[MiniSlot { size: 120.0, at: None }; 3],
             false,
+            240.0,
         );
         let mascot = on_screen(layout.window, layout.mascot);
         let panel = on_screen(layout.window, layout.panel.unwrap());
@@ -1250,6 +1273,7 @@ mod corner_tests {
             Some((720.0, 320.0)),
             &[MiniSlot { size: 120.0, at: None }; 9],
             false,
+            240.0,
         );
 
         assert_eq!(layout.minis.len(), 9);
@@ -1265,7 +1289,7 @@ mod corner_tests {
     fn dragging_a_group_keeps_the_mascot_in_place() {
         let scale = 1.5;
         let work = rect(0.0, 0.0, 2880.0, 1560.0);
-        let before = corner_layout(work, scale, None, None, &[MiniSlot { size: 120.0, at: None }; 3], false);
+        let before = corner_layout(work, scale, None, None, &[MiniSlot { size: 120.0, at: None }; 3], false, 240.0);
         remember_mascot_offset(&before, scale);
         let saved = dragged_mascot_at((before.window.x, before.window.y));
         let after = corner_layout(
@@ -1275,6 +1299,7 @@ mod corner_tests {
             None,
             &[MiniSlot { size: 120.0, at: None }; 3],
             false,
+            240.0,
         );
 
         assert_eq!(
@@ -1312,6 +1337,7 @@ mod corner_tests {
             None,
             &[MiniSlot { size: 120.0, at: None }; 9],
             false,
+            240.0,
         );
 
         assert!(inside(work, layout.window));
@@ -1331,6 +1357,7 @@ mod corner_tests {
             Some((720.0, 320.0)),
             &[MiniSlot { size: 120.0, at: None }],
             false,
+            240.0,
         );
         let mascot = on_screen(layout.window, layout.mascot);
         let panel = on_screen(layout.window, layout.panel.unwrap());
@@ -1354,6 +1381,7 @@ mod corner_tests {
                 MiniSlot { size: 90.0, at: None },
             ],
             false,
+            240.0,
         );
         let bottoms: Vec<f64> = layout
             .minis
@@ -1376,6 +1404,7 @@ mod corner_tests {
             None,
             &[MiniSlot { size: 120.0, at: Some((16.0, 16.0)) }],
             false,
+            240.0,
         );
 
         assert_eq!(layout.window, rect(16.0, 16.0, 1888.0, 1008.0));
@@ -1391,6 +1420,7 @@ mod corner_tests {
             None,
             &[MiniSlot { size: 120.0, at: Some((5000.0, 5000.0)) }],
             false,
+            240.0,
         );
 
         assert!(inside(WORK, on_screen(layout.window, layout.minis[0])));
@@ -1405,6 +1435,7 @@ mod corner_tests {
             None,
             &[MiniSlot { size: 120.0, at: None }],
             true,
+            240.0,
         );
 
         assert_eq!(layout.window, WORK);

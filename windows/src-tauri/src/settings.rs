@@ -538,6 +538,7 @@ mod tests {
   "agyApprovalsEnabled": true,
   "islandAnchor": "top",
   "cornerPos": { "x": 100.0, "y": 200.0 },
+  "mascotSize": 180.0,
   "miniSize": 96.0,
   "miniDisplay": "sessions",
   "subagentLooks": { "Explore": { "color": "#60A5FA", "accessory": "cap", "eyes": "round", "cheeks": "rose" } },
@@ -627,6 +628,7 @@ mod tests {
     #[test]
     fn customisable_mascot_settings_have_safe_defaults() {
         let settings = Settings::default();
+        assert_eq!(settings.mascot_size, 240.0);
         assert_eq!(settings.mini_size, 120.0);
         assert_eq!(settings.mini_display, "all");
         assert!(settings.subagent_looks.is_empty());
@@ -637,17 +639,34 @@ mod tests {
     #[test]
     fn a_file_from_before_customisable_mascots_uses_the_defaults() {
         let mut old = custom().as_object().unwrap().clone();
-        for key in ["miniSize", "miniDisplay", "subagentLooks", "knownSubagentTypes", "miniPositions"] {
+        for key in [
+            "mascotSize",
+            "miniSize",
+            "miniDisplay",
+            "subagentLooks",
+            "knownSubagentTypes",
+            "miniPositions",
+        ] {
             old.remove(key);
         }
         let loaded = parse(&serde_json::to_vec(&old).unwrap()).unwrap();
 
+        assert_eq!(loaded.mascot_size, 240.0);
         assert_eq!(loaded.mini_size, 120.0);
         assert_eq!(loaded.mini_display, "all");
         assert!(loaded.subagent_looks.is_empty());
         assert!(loaded.known_subagent_types.is_empty());
         assert!(loaded.mini_positions.is_empty());
         assert_eq!(loaded.model, "some-model");
+    }
+
+    #[test]
+    fn mascot_size_is_clamped() {
+        let too_large = parse(&custom_with("mascotSize", Some(json!(300.0)))).unwrap();
+        let too_small = parse(&custom_with("mascotSize", Some(json!(50.0)))).unwrap();
+
+        assert_eq!(too_large.mascot_size, 240.0);
+        assert_eq!(too_small.mascot_size, 120.0);
     }
 
     #[test]
@@ -1094,6 +1113,7 @@ mod tests {
                 "agyApprovalsEnabled",
                 "islandAnchor",
                 "cornerPos",
+                "mascotSize",
                 "miniSize",
                 "miniDisplay",
                 "subagentLooks",

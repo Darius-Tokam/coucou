@@ -3,7 +3,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { CORNER_HOVER_CLOSE_S, cornerRects, placeInPanel } from "../src/island/corner.ts";
+import { CORNER_HOVER_CLOSE_S, clampMascotSize, cornerRects, placeInPanel } from "../src/island/corner.ts";
 
 // Mascot bottom-right of the screen: the panel area is on its left, bottom-aligned.
 const BOTTOM_RIGHT = {
@@ -40,6 +40,12 @@ test("minis take the mouse too", () => {
 
 test("the corner closes faster than the top island", () => {
   assert.equal(CORNER_HOVER_CLOSE_S, 0.3);
+});
+
+test("big mascot size is clamped before it reaches Rust", () => {
+  assert.equal(clampMascotSize(50), 120);
+  assert.equal(clampMascotSize(180), 180);
+  assert.equal(clampMascotSize(300), 240);
 });
 
 test("the card hugs the mascot: bottom-right corner", () => {

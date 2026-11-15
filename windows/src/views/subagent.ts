@@ -79,7 +79,7 @@ export function buildSubagent(actions: Pick<ViewActions, "openPill">): ViewHost 
           type: "button",
           onclick: () => snapshot && actions.openPill(snapshot.pillId),
         },
-        h("span", { text: tl("Session") }),
+        h("span", { text: tl("Open session") }),
       );
       body.append(title, steps, answer, h("div", { class: "actions" }, session));
     },

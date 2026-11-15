@@ -460,6 +460,8 @@ const NOT_TEXT = new Set([
   "Resend", // the service's name (the Mac's "Resend" is a button: send again)
   "Stop", // Claude Code's hook event (the Mac's "Stop" is a button)
   "running", // the phase of a mail plan (src/views/mailplan.ts)
+  "session", // what a click on a small mascot opens (src/island/corner.ts)
+  "sessions", // the "small mascots" setting value (src/settings/mascot.ts)
 ]);
 
 test("no known user-facing English literal outside t() in the views and settings", () => {

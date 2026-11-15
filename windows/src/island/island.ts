@@ -34,8 +34,8 @@ import { refreshHookPills } from "./integrations";
 import { restoreAlertFocus } from "./hooks";
 import { DesktopLink } from "./desktop";
 import {
-  CORNER_HOVER_CLOSE_S, CORNER_SUPPORTED, HoverStart, MASCOT_SIZE, cornerRects, mascotClickAction,
-  miniClickTarget, placeInPanel,
+  CORNER_HOVER_CLOSE_S, CORNER_SUPPORTED, HoverStart, MASCOT_SIZE, clampMascotSize, cornerRects,
+  mascotClickAction, miniClickTarget, placeInPanel,
 } from "./corner";
 import { CornerView } from "./corner-view";
 import { cornerAgentState } from "../mascot/states";
@@ -142,6 +142,7 @@ export class Island {
   corner!: CornerView;
   /** Corner mode's small mascots, one per running agent. */
   minis!: MinisView;
+  private appliedMascotSize = MASCOT_SIZE;
   private cornerMinisKey = "";
   private miniWakeTimer: number | null = null;
   private miniWakeAt: number | null = null;
@@ -1163,9 +1164,10 @@ export class Island {
   /** Tells Rust the folded window's size: the closed island's, or none (the strip). */
   private sendCollapsedSize(force = false) {
     if (this.cornerMode) {
-      if (!force && this.collapsedTo.w === MASCOT_SIZE) return;
-      this.collapsedTo = { w: MASCOT_SIZE, h: MASCOT_SIZE };
-      void Bridge.setCollapsed(true, MASCOT_SIZE, MASCOT_SIZE);
+      const mascotSize = clampMascotSize(State.settings.mascotSize);
+      if (!force && this.collapsedTo.w === mascotSize && this.collapsedTo.h === mascotSize) return;
+      this.collapsedTo = { w: mascotSize, h: mascotSize };
+      void Bridge.setCollapsed(true, mascotSize, mascotSize);
       return;
     }
     const size = this.closedShows ? { w: this.closedW, h: CLOSED_H } : { w: 0, h: 0 };
@@ -1828,6 +1830,10 @@ export class Island {
 
   /** Applies settings coming from Rust at boot. */
   applySettings() {
+    const mascotSize = clampMascotSize(State.settings.mascotSize);
+    const mascotSizeChanged = mascotSize !== this.appliedMascotSize;
+    State.settings.mascotSize = mascotSize;
+    this.appliedMascotSize = mascotSize;
     // The closed island may have changed: what it shows, or whether it shows.
     this.closedKey = "";
     this.updateClosed();
@@ -1844,6 +1850,9 @@ export class Island {
     this.fsm.openOnHover = !this.cornerMode && State.settings.openOnHover;
     this.fsm.hoverCloseDelay = this.cornerMode ? CORNER_HOVER_CLOSE_S : this.topHoverCloseDelay;
     this.corner.setEnabled(this.cornerMode);
+    if (mascotSizeChanged && this.cornerMode && !(State.mode === "hidden" && this.collapsed)) {
+      void Bridge.reposition();
+    }
     this.updateWindowCollapsed();
     State.notify();
     // ponytail: one timer for the life of the window; a minute is the clock's finest tick.

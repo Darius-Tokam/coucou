@@ -36,6 +36,28 @@ test("the settings offer size, display and subagent colors", () => {
   assert.match(section.textContent, /Put the mascots back in line/);
 });
 
+test("the settings offer a big mascot size", () => {
+  const settings = {
+    islandAnchor: "corner",
+    mascotSize: 180,
+    miniSize: 90,
+    miniDisplay: "all",
+    subagentLooks: {},
+    knownSubagentTypes: [],
+    miniPositions: {},
+  };
+  const section = mascotSection(() => settings, () => {});
+  const range = section.find("INPUT").find((input) =>
+    input.getAttribute("type") === "range"
+      && input.getAttribute("min") === "120"
+      && input.getAttribute("max") === "240"
+  );
+
+  assert.ok(range);
+  assert.equal(range.getAttribute("step"), "20");
+  assert.match(section.textContent, /Size of the big mascot/);
+});
+
 test("a folder that isn't an export says so", () => {
   assert.equal(importErrorText("not_an_export"), "This folder doesn't hold a MascotForge export.");
 });
