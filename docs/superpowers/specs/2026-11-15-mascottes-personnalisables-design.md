@@ -55,6 +55,13 @@ Les petites mascottes existent, mais toutes les mascottes de sous-agents se ress
 - Réglage « Petites mascottes » : sessions et sous-agents (défaut), sessions seulement, aucune.
 - La file (`corner_layout`) reçoit les tailles au lieu d'une constante.
 
+### Taille de la grande mascotte (demande de Darius, 2026-11-15)
+
+- Réglage « Taille de la grande mascotte » : 120 à 240 px, 240 par défaut (la taille actuelle).
+- La fenêtre repliée, la zone cliquable, la file et le panneau suivent cette taille ; le cadrage 3D (1.2) reste le même, la mascotte garde sa marge pour sauter.
+- Le coin haut-gauche enregistré (`corner_pos`) ne bouge pas quand la taille change : la mascotte rétrécit vers son coin haut-gauche, puis est ramenée dans la zone de travail si besoin.
+- Masquer les petites mascottes passe par le réglage « Petites mascottes : aucune » (ci-dessous).
+
 ### Placement libre
 
 - Une mascotte jamais déplacée est dans la file, comme aujourd'hui.
