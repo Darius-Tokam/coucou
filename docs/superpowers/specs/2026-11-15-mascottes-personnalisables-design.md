@@ -85,6 +85,24 @@ Les petites mascottes existent, mais toutes les mascottes de sous-agents se ress
   - Si le sous-agent part pendant que sa fiche est ouverte, le panneau reste où il est jusqu'à sa fermeture.
   - Toutes les autres vues gardent le placement actuel, à côté de la grande mascotte.
 
+### Galerie des mascottes (demande de Darius, 2026-11-15)
+
+Darius veut un endroit visuel pour changer de mascotte, sans repasser par le sélecteur de dossier.
+
+- **Où** : Réglages, Général, section Mascotte, en tête : une grille de vignettes « Galerie ».
+- **Ce qu'elle montre** :
+  - toutes les mascottes déjà importées. Chaque import est désormais gardé dans une bibliothèque (`mascots/library/<nom du dossier d'export>`) en plus d'être installé ;
+  - les exports d'un « Dossier de mascottes » choisi une fois (bouton « Choisir le dossier de mascottes », par exemple `text-to-mascot\exports`). Coucou lit chaque sous-dossier qui contient un export valide, sans rien copier tant qu'on ne l'applique pas.
+- **Une vignette** :
+  - la mascotte elle-même, rendue en petit (environ 96 px) puis figée après son premier état `idle`, avec la même iframe et la même pause que les mascottes du coin ;
+  - son nom (celui du manifeste, sinon le nom du dossier) et un badge du moteur (3D, Blob, Vidéo) ;
+  - deux boutons, « Claude Code » et « Codex » : un clic applique cet export à ce rôle (même vérification et même installation qu'un import). La vignette active pour chaque rôle est marquée.
+- **Survol d'une vignette** : elle s'anime, puis se fige de nouveau en sortant.
+- **Coût** : les vignettes ne se chargent que lorsqu'elles sont visibles à l'écran (défilement), au plus 12 à la fois. Une vignette sortie de la vue est déchargée. La limite de contextes WebGL d'une page (de l'ordre de 16) n'est jamais atteinte.
+- **Protocole** : le protocole `mascot` sert aussi `/lib/<id>/…` pour la bibliothèque et `/dir/<id>/…` pour le dossier de mascottes. Il est en lecture seule et garde la même protection contre les chemins qui sortent du dossier. L'`id` est le nom du sous-dossier, refusé s'il contient autre chose que des lettres, des chiffres, `-`, `_` ou `.`.
+- **Erreurs** : un export invalide du dossier de mascottes n'apparaît pas, et son nom est noté dans le journal. Une application qui échoue affiche le message d'erreur d'import existant sous la vignette.
+- **Retirer** : un bouton « Retirer de la galerie » sur une vignette de la bibliothèque la supprime de la bibliothèque, sans toucher à la mascotte active.
+
 ### Réglages
 
 Section « Mascotte », sous les deux exports : taille, affichage, « Couleurs des sous-agents » (une ligne par type connu : pastille de couleur, accessoire, yeux, joues ; les trois derniers grisés si l'export Claude Code ou Codex n'est pas un blob), un champ « Ajouter un type », « Remettre les mascottes en file ». Les types connus sont ceux déjà vus par Coucou, mémorisés dans les réglages.

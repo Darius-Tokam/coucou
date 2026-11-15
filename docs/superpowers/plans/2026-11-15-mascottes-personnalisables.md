@@ -159,3 +159,17 @@
 
 - [ ] **Step 1: Tests Rust** (valeurs pour `WORK` 1920 x 1040, grande mascotte de 240 à la maison, 3 cases de 120 en file, panneau 720 x 320) : `a subagent card opens above the line, centred on its mascot` (ancre = troisième case, écran `(1280, 904, 120, 120)` : panneau écran `(980, 456, 720, 320)`) ; `a subagent card opens below a placed mascot near the top` (ancre posée `(100, 100, 120, 120)` : panneau écran `(0, 228, 720, 320)`) ; `no anchor keeps the old placement` (les tests existants passent `None`). Pousser seuls : CI rouge.
 - [ ] **Step 2:** Implémenter Rust et page ; CI verte ; vérification dans l'app (capture d'une fiche ouverte à côté d'une petite mascotte en file et d'une posée).
+
+### Task 11: Galerie des mascottes (ajout du 2026-11-15)
+
+**Files:** Modify `src-tauri/src/mascot.rs` (bibliothèque, dossier de mascottes, routage, commandes, tests), `src-tauri/src/lib.rs` (protocole, commandes), `src-tauri/src/settings.rs` (`mascot_folder: Option<String>`), `src/core/bridge.ts`, `src/core/state.ts`, `src/mascot/host.ts` (option `thumb`), `src/settings/mascot.ts`, nouveau `src/settings/mascot-gallery.ts`, `src/i18n/extra.json`, tests.
+
+**Interfaces:**
+- Rust : `install` garde aussi une copie dans `mascots/library/<id>` (`id` = nom du dossier d'export, nettoyé) ; `pub fn gallery(folder: Option<&Path>) -> Vec<GalleryItem>` avec `GalleryItem { id: String, source: "library" | "folder", info: MascotInfo }` (bibliothèque d'abord, puis dossier ; exports invalides ignorés) ; `fn valid_id(&str) -> bool` (lettres, chiffres, `-`, `_`, `.`, pas `..`) ; `route` reconnaît `/lib/<id>/…` et `/dir/<id>/…` (`base_url` de chaque `info` en conséquence).
+- Commandes : `mascot_gallery() -> Vec<GalleryItem>` (lit `mascot_folder` des réglages) ; `mascot_apply(app, source, id, slot) -> Result<MascotInfo, String>` (même chemin que `mascot_import`, mêmes codes d'erreur, plus `"bad_id"`) ; `mascot_forget(id)` (retire de la bibliothèque) ; `mascot_pick_folder` n'est pas nécessaire : la page utilise le sélecteur existant puis enregistre `mascotFolder` dans les réglages.
+- Page : `mascotGallery(settings, save): HTMLElement` dans `mascot-gallery.ts` ; vignettes `MascotHost` en mode `thumb` (rendu 96 px, pause après 1,5 s en `idle`, reprise au survol), chargées par `IntersectionObserver`, 12 au plus en même temps ; boutons « Claude Code » et « Codex » (désactivés pendant l'application, erreur visible sous la vignette, active marquée) ; « Choose the mascot folder » ; « Remove from gallery » pour la bibliothèque.
+
+- [ ] **Step 1: Tests Rust** : `an import is kept in the library` ; `the gallery lists the library then the folder` ; `an invalid export in the folder is skipped` ; `a gallery id cannot climb out` (`..`, `a/b`, `a\b` refusés) ; `the protocol serves a library export` (`/lib/<id>/manifest.json`) ; `applying from the gallery installs into the slot`. Pousser seuls : CI rouge.
+- [ ] **Step 2: Tests TS** : `at most twelve thumbnails load at once` (fonction pure de sélection des vignettes à charger) ; `the active export is marked per role`. Rouge puis vert en local.
+- [ ] **Step 3:** Implémenter ; i18n 13 langues ; CI verte.
+- [ ] **Step 4: Vérification dans l'app** : choisir `text-to-mascot\exports` comme dossier ; capture de la galerie ; appliquer un export à Codex en un clic ; mesure processeur avec la galerie ouverte.
