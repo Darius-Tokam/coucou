@@ -12,10 +12,10 @@
 // protocol too: the export's scripts then run on the mascot origin, not the
 // island's, so they can't reach the island's window or its commands.
 
-use crate::platform;
+use crate::{platform, Shared};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, State};
 
 /// Where the page finds the active mascot's files (lib.rs registers the scheme).
 #[cfg(windows)]
@@ -53,10 +53,31 @@ impl Slot {
     }
 }
 
-/// Splits the export slot from a path served by the `mascot` protocol.
-pub fn route(url_path: &str) -> Option<(Slot, String)> {
-    let (name, rest) = url_path.strip_prefix('/')?.split_once('/')?;
-    Some((Slot::parse(name)?, format!("/{rest}")))
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RouteRoot {
+    Slot(Slot),
+    Library(String),
+    Folder(String),
+}
+
+/// Splits the export root from a path served by the `mascot` protocol.
+pub fn route(url_path: &str) -> Option<(RouteRoot, String)> {
+    let path = url_path.strip_prefix('/')?;
+    let (kind, tail) = path.split_once('/')?;
+    if let Some(slot) = Slot::parse(kind) {
+        return Some((RouteRoot::Slot(slot), format!("/{tail}")));
+    }
+    let (encoded_id, rest) = tail.split_once('/')?;
+    let id = percent_decode(encoded_id);
+    if !valid_id(&id) {
+        return None;
+    }
+    let root = match kind {
+        "lib" => RouteRoot::Library(id),
+        "dir" => RouteRoot::Folder(id),
+        _ => return None,
+    };
+    Some((root, format!("/{rest}")))
 }
 
 /// One response of the `mascot` protocol.
@@ -89,13 +110,14 @@ mascot-avatar { display: block; width: 100%; height: 100%; }
   var pauseFrame = null;
   var searchParams = new URLSearchParams(window.location.search);
   var mini = searchParams.get("mini") === "1";
+  var thumb = searchParams.get("thumb") === "1";
   function tell(message) { window.parent.postMessage(message, "*"); }
   function play() { if (avatar && wanted) avatar.play(wanted.state, { immediate: wanted.immediate }); }
   function engine(tag) {
     return avatar && avatar.shadowRoot ? avatar.shadowRoot.querySelector(tag) : null;
   }
   function configureMini() {
-    if (!mini) return;
+    if (!mini && !thumb) return;
     var wobnimo = engine("wobnimo-mascot");
     if (wobnimo && wobnimo.instance) wobnimo.instance.options.maxPixelRatio = 1;
     // Blob Atelier's public low-cost mode also lowers its optional 3D resolution.
@@ -353,6 +375,16 @@ pub struct MascotInfo {
     pub script_path: String,
     /// The `mascot` protocol's root: manifest.json and mascot.js are served under it.
     pub base_url: String,
+    /// Export folder name kept when this copy was installed.
+    pub source_id: Option<String>,
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct GalleryItem {
+    pub id: String,
+    pub source: String,
+    pub info: MascotInfo,
 }
 
 #[derive(Debug, PartialEq)]
@@ -385,6 +417,46 @@ pub fn slot_dir(slot: Slot) -> PathBuf {
     mascots_dir().join(slot.folder())
 }
 
+fn valid_id(id: &str) -> bool {
+    !id.is_empty()
+        && id != "."
+        && id != ".."
+        && id.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+        // Windows drops trailing dots from a path: "..." would name the folder above.
+        && id.chars().any(|c| c.is_ascii_alphanumeric())
+}
+
+fn clean_id(id: &str) -> String {
+    let cleaned: String = id
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.') { c } else { '_' })
+        .collect();
+    if valid_id(&cleaned) { cleaned } else { "mascot".into() }
+}
+
+fn export_id(src: &Path) -> String {
+    let folder = if src.file_name().is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case("mascot")) {
+        src.parent().and_then(Path::file_name)
+    } else {
+        src.file_name()
+    };
+    clean_id(&folder.unwrap_or_default().to_string_lossy())
+}
+
+/// Turns a parsed protocol path into an export folder and a relative path.
+pub fn resolve_route(
+    root: &Path,
+    folder: Option<&Path>,
+    route: (RouteRoot, String),
+) -> Option<(PathBuf, String)> {
+    let export = match route.0 {
+        RouteRoot::Slot(slot) => root.join(slot.folder()),
+        RouteRoot::Library(id) => root.join("library").join(id),
+        RouteRoot::Folder(id) => find_export(&folder?.join(id))?,
+    };
+    Some((export, route.1))
+}
+
 /// The export folder inside what the user picked: the folder itself, or its `mascot/`.
 pub fn find_export(chosen: &Path) -> Option<PathBuf> {
     [chosen.to_path_buf(), chosen.join("mascot")]
@@ -402,8 +474,19 @@ fn file_inside(dir: &Path, rel: &str) -> Option<PathBuf> {
     (stays && full.is_file()).then_some(full)
 }
 
-/// Reads and checks an export folder.
-pub fn read_export(dir: &Path, slot: Slot) -> Result<MascotInfo, ImportError> {
+fn source_id_for(dir: &Path) -> Option<String> {
+    let name = dir.file_name()?.to_string_lossy();
+    let id = std::fs::read_to_string(dir.parent()?.join(format!("{name}.source"))).ok()?;
+    let id = id.trim();
+    valid_id(id).then(|| id.to_string())
+}
+
+fn read_export_at(
+    dir: &Path,
+    base_url: String,
+    source_id: Option<String>,
+    fallback_name: Option<&str>,
+) -> Result<MascotInfo, ImportError> {
     let manifest_path = dir.join("manifest.json");
     let text = std::fs::read_to_string(&manifest_path).map_err(|_| ImportError::NotAnExport)?;
     let manifest: serde_json::Value = serde_json::from_str(&text).map_err(|_| ImportError::BadManifest)?;
@@ -444,7 +527,7 @@ pub fn read_export(dir: &Path, slot: Slot) -> Result<MascotInfo, ImportError> {
         .or_else(|| states.first().cloned())
         .unwrap_or_else(|| "idle".into());
     Ok(MascotInfo {
-        name: text_of("name").unwrap_or_else(|| "MascotForge".into()),
+        name: text_of("name").unwrap_or_else(|| fallback_name.unwrap_or("MascotForge").to_string()),
         engine,
         credit: text_of("credit"),
         alpha: text_of("alpha").unwrap_or_else(|| "none".into()),
@@ -453,8 +536,19 @@ pub fn read_export(dir: &Path, slot: Slot) -> Result<MascotInfo, ImportError> {
         tint_material,
         manifest_path: manifest_path.to_string_lossy().into_owned(),
         script_path: script.to_string_lossy().into_owned(),
-        base_url: format!("{BASE_URL}{}/", slot.name()),
+        base_url,
+        source_id,
     })
+}
+
+/// Reads and checks an installed export folder.
+pub fn read_export(dir: &Path, slot: Slot) -> Result<MascotInfo, ImportError> {
+    read_export_at(
+        dir,
+        format!("{BASE_URL}{}/", slot.name()),
+        source_id_for(dir),
+        None,
+    )
 }
 
 /// Copies a folder tree, files and folders only.
@@ -480,25 +574,192 @@ pub fn install(src: &Path, dest_root: &Path, name: &str) -> Result<MascotInfo, I
         "codex" => Slot::Codex,
         _ => return Err(ImportError::Io),
     };
-    // Checked where it is first: nothing is copied from a folder that isn't an export.
-    read_export(src, slot)?;
+    let id = export_id(src);
+    let base = format!("{BASE_URL}{}/", slot.name());
+    // Check before copying so an invalid import never reaches the library.
+    read_export_at(src, base.clone(), Some(id.clone()), Some(&id))?;
     let tmp = dest_root.join(format!("{name}.tmp"));
     let current = dest_root.join(name);
-    let _ = std::fs::remove_dir_all(&tmp);
-    if copy_tree(src, &tmp).is_err() {
-        let _ = std::fs::remove_dir_all(&tmp);
+    let library = dest_root.join("library");
+    let library_tmp = library.join(format!("{id}.tmp~"));
+    let library_export = library.join(&id);
+    if std::fs::create_dir_all(&library).is_err() {
         return Err(ImportError::Io);
     }
-    if let Err(e) = read_export(&tmp, slot) {
+    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = std::fs::remove_dir_all(&library_tmp);
+    if copy_tree(src, &tmp).is_err() || copy_tree(src, &library_tmp).is_err() {
         let _ = std::fs::remove_dir_all(&tmp);
+        let _ = std::fs::remove_dir_all(&library_tmp);
+        return Err(ImportError::Io);
+    }
+    if let Err(e) = read_export_at(&tmp, base, Some(id.clone()), Some(&id)) {
+        let _ = std::fs::remove_dir_all(&tmp);
+        let _ = std::fs::remove_dir_all(&library_tmp);
         return Err(e);
     }
-    if current.exists() && std::fs::remove_dir_all(&current).is_err() {
+    if let Err(e) = read_export_at(
+        &library_tmp,
+        format!("{BASE_URL}lib/{id}/"),
+        Some(id.clone()),
+        Some(&id),
+    ) {
         let _ = std::fs::remove_dir_all(&tmp);
+        let _ = std::fs::remove_dir_all(&library_tmp);
+        return Err(e);
+    }
+    let source = dest_root.join(format!("{name}.source"));
+    let source_tmp = dest_root.join(format!("{name}.source.tmp"));
+    if std::fs::write(&source_tmp, &id).is_err() {
+        let _ = std::fs::remove_dir_all(&tmp);
+        let _ = std::fs::remove_dir_all(&library_tmp);
         return Err(ImportError::Io);
     }
-    std::fs::rename(&tmp, &current).map_err(|_| ImportError::Io)?;
+    let current_backup = dest_root.join(format!("{name}.backup"));
+    let library_backup = library.join(format!("{id}.backup~"));
+    let source_backup = dest_root.join(format!("{name}.source.backup"));
+    let _ = std::fs::remove_dir_all(&current_backup);
+    let _ = std::fs::remove_dir_all(&library_backup);
+    let _ = std::fs::remove_file(&source_backup);
+    let had_current = current.exists();
+    let had_library = library_export.exists();
+    let had_source = source.exists();
+    if (had_current && std::fs::rename(&current, &current_backup).is_err())
+        || (had_library && std::fs::rename(&library_export, &library_backup).is_err())
+        || (had_source && std::fs::rename(&source, &source_backup).is_err())
+    {
+        if current_backup.exists() {
+            let _ = std::fs::rename(&current_backup, &current);
+        }
+        if library_backup.exists() {
+            let _ = std::fs::rename(&library_backup, &library_export);
+        }
+        if source_backup.exists() {
+            let _ = std::fs::rename(&source_backup, &source);
+        }
+        let _ = std::fs::remove_dir_all(&tmp);
+        let _ = std::fs::remove_dir_all(&library_tmp);
+        let _ = std::fs::remove_file(&source_tmp);
+        return Err(ImportError::Io);
+    }
+    let installed = std::fs::rename(&tmp, &current).is_ok()
+        && std::fs::rename(&library_tmp, &library_export).is_ok()
+        && std::fs::rename(&source_tmp, &source).is_ok();
+    if !installed {
+        let _ = std::fs::remove_dir_all(&current);
+        let _ = std::fs::remove_dir_all(&library_export);
+        let _ = std::fs::remove_file(&source);
+        if had_current {
+            let _ = std::fs::rename(&current_backup, &current);
+        }
+        if had_library {
+            let _ = std::fs::rename(&library_backup, &library_export);
+        }
+        if had_source {
+            let _ = std::fs::rename(&source_backup, &source);
+        }
+        let _ = std::fs::remove_dir_all(&tmp);
+        let _ = std::fs::remove_dir_all(&library_tmp);
+        let _ = std::fs::remove_file(&source_tmp);
+        return Err(ImportError::Io);
+    }
+    let _ = std::fs::remove_dir_all(&current_backup);
+    let _ = std::fs::remove_dir_all(&library_backup);
+    let _ = std::fs::remove_file(&source_backup);
     read_export(&current, slot)
+}
+
+fn note_invalid(id: &str, error: &ImportError) {
+    let message = format!("mascot gallery: ignored {id}: {}", error.code());
+    #[cfg(not(test))]
+    crate::log::line(message);
+    #[cfg(test)]
+    eprintln!("{message}");
+}
+
+fn gallery_group(root: &Path, source: &str, protocol: &str, log_invalid: bool) -> Vec<GalleryItem> {
+    let Ok(entries) = std::fs::read_dir(root) else { return Vec::new() };
+    let mut entries: Vec<_> = entries.filter_map(Result::ok).filter(|entry| entry.path().is_dir()).collect();
+    entries.sort_by_key(|entry| entry.file_name());
+    entries
+        .into_iter()
+        .filter_map(|entry| {
+            let id = entry.file_name().to_string_lossy().to_string();
+            if !valid_id(&id) {
+                if log_invalid {
+                    note_invalid(&id, &ImportError::NotAnExport);
+                }
+                return None;
+            }
+            let Some(export) = find_export(&entry.path()) else {
+                if log_invalid {
+                    note_invalid(&id, &ImportError::NotAnExport);
+                }
+                return None;
+            };
+            match read_export_at(
+                &export,
+                format!("{BASE_URL}{protocol}/{id}/"),
+                Some(id.clone()),
+                Some(&id),
+            ) {
+                Ok(info) => Some(GalleryItem { id, source: source.into(), info }),
+                Err(error) => {
+                    if log_invalid {
+                        note_invalid(&id, &error);
+                    }
+                    None
+                }
+            }
+        })
+        .collect()
+}
+
+fn gallery_from(root: &Path, folder: Option<&Path>) -> Vec<GalleryItem> {
+    let mut items = gallery_group(&root.join("library"), "library", "lib", false);
+    if let Some(folder) = folder {
+        items.extend(gallery_group(folder, "folder", "dir", true));
+    }
+    items
+}
+
+pub fn gallery(folder: Option<&Path>) -> Vec<GalleryItem> {
+    gallery_from(&mascots_dir(), folder)
+}
+
+fn error_code(error: ImportError) -> String {
+    match error {
+        ImportError::MissingFile(file) => format!("missing_file:{file}"),
+        error => error.code().to_string(),
+    }
+}
+
+fn gallery_export(
+    root: &Path,
+    folder: Option<&Path>,
+    source: &str,
+    id: &str,
+) -> Result<PathBuf, String> {
+    if !valid_id(id) {
+        return Err("bad_id".into());
+    }
+    let chosen = match source {
+        "library" => root.join("library").join(id),
+        "folder" => folder.ok_or_else(|| "not_an_export".to_string())?.join(id),
+        _ => return Err("bad_id".into()),
+    };
+    find_export(&chosen).ok_or_else(|| "not_an_export".into())
+}
+
+fn apply_from(
+    root: &Path,
+    folder: Option<&Path>,
+    source: &str,
+    id: &str,
+    slot: Slot,
+) -> Result<MascotInfo, String> {
+    let export = gallery_export(root, folder, source, id)?;
+    install(&export, root, slot.folder()).map_err(error_code)
 }
 
 #[derive(Serialize, Clone)]
@@ -523,9 +784,44 @@ pub fn mascot_import(app: AppHandle, folder: String, slot: String) -> Result<Mas
             announce(&app, slot, &Some(info.clone()));
             Ok(info)
         }
-        Err(ImportError::MissingFile(file)) => Err(format!("missing_file:{file}")),
-        Err(e) => Err(e.code().to_string()),
+        Err(error) => Err(error_code(error)),
     }
+}
+
+/// Mascots saved by imports, then valid exports in the chosen folder.
+#[tauri::command]
+pub fn mascot_gallery(shared: State<Shared>) -> Vec<GalleryItem> {
+    let folder = shared.settings.lock().unwrap().mascot_folder.clone().map(PathBuf::from);
+    gallery(folder.as_deref())
+}
+
+/// Installs one gallery entry into an agent slot.
+#[tauri::command(async)]
+pub fn mascot_apply(
+    app: AppHandle,
+    shared: State<'_, Shared>,
+    source: String,
+    id: String,
+    slot: String,
+) -> Result<MascotInfo, String> {
+    let slot = Slot::parse(&slot).ok_or_else(|| "bad_slot".to_string())?;
+    let folder = shared.settings.lock().unwrap().mascot_folder.clone().map(PathBuf::from);
+    let info = apply_from(&mascots_dir(), folder.as_deref(), &source, &id, slot)?;
+    announce(&app, slot, &Some(info.clone()));
+    Ok(info)
+}
+
+/// Removes a saved gallery copy without changing an installed slot.
+#[tauri::command]
+pub fn mascot_forget(id: String) -> Result<(), String> {
+    if !valid_id(&id) {
+        return Err("bad_id".into());
+    }
+    let path = mascots_dir().join("library").join(id);
+    if !path.exists() {
+        return Ok(());
+    }
+    std::fs::remove_dir_all(path).map_err(|_| "io".to_string())
 }
 
 /// The active mascot, if any.

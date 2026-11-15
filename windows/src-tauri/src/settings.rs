@@ -131,6 +131,8 @@ pub struct Settings {
     /// Logical side of the big corner mascot.
     #[serde(default = "default_mascot_size", deserialize_with = "deserialize_mascot_size")]
     pub mascot_size: f64,
+    /// Parent folder whose direct children may be MascotForge exports.
+    pub mascot_folder: Option<String>,
     /// Logical side of a session mini; subagents use three quarters of it.
     pub mini_size: f64,
     /// Which agent minis the corner shows: "all", "sessions" or "none".
@@ -243,6 +245,7 @@ impl Default for Settings {
             island_anchor: if cfg!(windows) { "corner" } else { "top" }.into(),
             corner_pos: None,
             mascot_size: default_mascot_size(),
+            mascot_folder: None,
             mini_size: 120.0,
             mini_display: "all".into(),
             subagent_looks: BTreeMap::new(),

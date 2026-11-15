@@ -992,8 +992,11 @@ pub fn run() {
         // The active MascotForge mascot's files, for the island's iframe (mascot.rs).
         .register_uri_scheme_protocol("mascot", |_ctx, request| {
             let range = request.headers().get("range").and_then(|v| v.to_str().ok());
-            let served = match mascot::route(request.uri().path()) {
-                Some((slot, rest)) => mascot::respond(&mascot::slot_dir(slot), &rest, range),
+            let folder = settings::load().mascot_folder.map(std::path::PathBuf::from);
+            let served = match mascot::route(request.uri().path())
+                .and_then(|route| mascot::resolve_route(&mascot::mascots_dir(), folder.as_deref(), route))
+            {
+                Some((root, rest)) => mascot::respond(&root, &rest, range),
                 None => mascot::Served {
                     status: 404,
                     headers: vec![("Access-Control-Allow-Origin", "*".into())],
@@ -1161,6 +1164,9 @@ pub fn run() {
             sounds::reveal_sounds_folder,
             sounds::reload_sounds,
             mascot::mascot_import,
+            mascot::mascot_gallery,
+            mascot::mascot_apply,
+            mascot::mascot_forget,
             mascot::mascot_current,
             mascot::mascot_clear,
             spotify::spotify_refresh,
