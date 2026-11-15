@@ -892,9 +892,24 @@ mod corner_tests {
 
     const WORK: IslandRect = IslandRect { x: 0.0, y: 0.0, w: 1920.0, h: 1040.0 };
 
+    fn on_screen(window: IslandRect, item: IslandRect) -> IslandRect {
+        rect(window.x + item.x, window.y + item.y, item.w, item.h)
+    }
+
+    fn inside(outer: IslandRect, inner: IslandRect) -> bool {
+        inner.x >= outer.x
+            && inner.y >= outer.y
+            && inner.x + inner.w <= outer.x + outer.w
+            && inner.y + inner.h <= outer.y + outer.h
+    }
+
+    fn overlaps(a: IslandRect, b: IslandRect) -> bool {
+        a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y
+    }
+
     #[test]
     fn the_mascot_starts_bottom_right() {
-        let layout = corner_layout(WORK, 1.0, None, None);
+        let layout = corner_layout(WORK, 1.0, None, None, 0);
         assert_eq!(layout.window, rect(1664.0, 784.0, 240.0, 240.0));
         assert_eq!(layout.mascot, rect(0.0, 0.0, 240.0, 240.0));
         assert_eq!(layout.panel, None);
@@ -902,7 +917,7 @@ mod corner_tests {
 
     #[test]
     fn the_panel_opens_toward_the_centre() {
-        let layout = corner_layout(WORK, 1.0, None, Some((720.0, 320.0)));
+        let layout = corner_layout(WORK, 1.0, None, Some((720.0, 320.0)), 0);
         assert_eq!(layout.window, rect(944.0, 704.0, 960.0, 320.0));
         assert_eq!(layout.panel, Some(rect(0.0, 0.0, 720.0, 320.0)));
         assert_eq!(layout.mascot, rect(720.0, 80.0, 240.0, 240.0));
@@ -912,7 +927,7 @@ mod corner_tests {
 
     #[test]
     fn a_top_left_mascot_opens_right_and_down() {
-        let layout = corner_layout(WORK, 1.0, Some((16.0, 16.0)), Some((720.0, 320.0)));
+        let layout = corner_layout(WORK, 1.0, Some((16.0, 16.0)), Some((720.0, 320.0)), 0);
         assert_eq!(layout.window, rect(16.0, 16.0, 960.0, 320.0));
         assert_eq!(layout.mascot, rect(0.0, 0.0, 240.0, 240.0));
         assert_eq!(layout.panel, Some(rect(240.0, 0.0, 720.0, 320.0)));
@@ -921,7 +936,7 @@ mod corner_tests {
     #[test]
     fn the_panel_stays_on_screen() {
         let short = rect(0.0, 0.0, 1920.0, 360.0);
-        let layout = corner_layout(short, 1.0, Some((1664.0, 70.0)), Some((720.0, 320.0)));
+        let layout = corner_layout(short, 1.0, Some((1664.0, 70.0)), Some((720.0, 320.0)), 0);
         // Upward would put the panel at y = -10: it comes down to the top of the work area.
         assert_eq!(layout.window.y, 0.0);
         assert_eq!(layout.panel.map(|p| p.y), Some(0.0));
@@ -930,14 +945,14 @@ mod corner_tests {
 
     #[test]
     fn a_lost_screen_sends_the_mascot_home() {
-        let layout = corner_layout(WORK, 1.0, Some((5000.0, 5000.0)), None);
+        let layout = corner_layout(WORK, 1.0, Some((5000.0, 5000.0)), None, 0);
         assert_eq!(layout.window, rect(1664.0, 784.0, 240.0, 240.0));
     }
 
     #[test]
     fn scale_two_doubles_the_window() {
         let work = rect(0.0, 0.0, 3840.0, 2080.0);
-        let layout = corner_layout(work, 2.0, None, None);
+        let layout = corner_layout(work, 2.0, None, None, 0);
         assert_eq!(layout.window.w, 480.0);
         assert_eq!(layout.mascot.w, 240.0);
         assert_eq!(layout.window.x, 3840.0 - 32.0 - 480.0);
@@ -945,8 +960,72 @@ mod corner_tests {
 
     #[test]
     fn a_mascot_over_the_edge_is_pulled_back_in() {
-        let layout = corner_layout(WORK, 1.0, Some((1800.0, 900.0)), None);
+        let layout = corner_layout(WORK, 1.0, Some((1800.0, 900.0)), None, 0);
         assert_eq!(layout.window, rect(1680.0, 800.0, 240.0, 240.0));
+    }
+
+    #[test]
+    fn minis_line_up_toward_the_centre() {
+        let layout = corner_layout(WORK, 1.0, None, None, 3);
+        assert_eq!(layout.window, rect(1280.0, 784.0, 624.0, 240.0));
+        assert_eq!(layout.mascot, rect(384.0, 0.0, 240.0, 240.0));
+        assert_eq!(
+            layout.minis,
+            vec![
+                rect(256.0, 120.0, 120.0, 120.0),
+                rect(128.0, 120.0, 120.0, 120.0),
+                rect(0.0, 120.0, 120.0, 120.0),
+            ]
+        );
+    }
+
+    #[test]
+    fn minis_wrap_on_a_narrow_screen() {
+        let work = rect(0.0, 0.0, 800.0, 600.0);
+        let layout = corner_layout(work, 1.0, None, None, 6);
+        let mascot = on_screen(layout.window, layout.mascot);
+        let mut rows = Vec::new();
+
+        assert_eq!(layout.minis.len(), 6);
+        for &mini in &layout.minis {
+            let mini = on_screen(layout.window, mini);
+            assert!(inside(work, mini));
+            assert!(!overlaps(mini, mascot));
+            if !rows.contains(&mini.y) {
+                rows.push(mini.y);
+            }
+        }
+        assert_eq!(rows.len(), 2);
+    }
+
+    #[test]
+    fn the_panel_opens_beside_the_minis_not_over_them() {
+        let layout = corner_layout(WORK, 1.0, None, Some((720.0, 320.0)), 3);
+        let mascot = on_screen(layout.window, layout.mascot);
+        let panel = on_screen(layout.window, layout.panel.unwrap());
+
+        assert_eq!(layout.minis.len(), 3);
+        assert!(inside(WORK, panel));
+        assert!(!overlaps(panel, mascot));
+        for &mini in &layout.minis {
+            assert!(!overlaps(panel, on_screen(layout.window, mini)));
+        }
+        assert_eq!(layout.window.x + layout.mascot.x, 1664.0);
+        assert_eq!(layout.window.y + layout.mascot.y, 784.0);
+    }
+
+    #[test]
+    fn twenty_agents_still_fit_a_small_screen() {
+        let work = rect(0.0, 0.0, 1366.0, 728.0);
+        let layout = corner_layout(work, 1.0, None, Some((720.0, 320.0)), 9);
+
+        assert_eq!(layout.minis.len(), 9);
+        assert!(inside(work, layout.window));
+        assert!(inside(work, on_screen(layout.window, layout.mascot)));
+        assert!(inside(work, on_screen(layout.window, layout.panel.unwrap())));
+        for &mini in &layout.minis {
+            assert!(inside(work, on_screen(layout.window, mini)));
+        }
     }
 
     #[test]

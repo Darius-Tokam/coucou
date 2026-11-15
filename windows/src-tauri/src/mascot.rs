@@ -401,6 +401,48 @@ mod tests {
     }
 
     #[test]
+    fn route_splits_the_slot_from_the_path() {
+        assert_eq!(
+            route("/claude/manifest.json"),
+            Some((Slot::Claude, "/manifest.json".into()))
+        );
+        assert_eq!(
+            route("/codex/__coucou_frame.html"),
+            Some((Slot::Codex, "/__coucou_frame.html".into()))
+        );
+        assert_eq!(route("/other/x"), None);
+        assert_eq!(route("/"), None);
+    }
+
+    #[test]
+    fn each_slot_has_its_own_folder() {
+        assert!(slot_dir(Slot::Claude).ends_with("current"));
+        assert!(slot_dir(Slot::Codex).ends_with("codex"));
+    }
+
+    #[test]
+    fn install_writes_the_named_folder() {
+        let dest = scratch("install-named-root");
+        let src = scratch("install-named-src");
+        blob_export(&src);
+
+        install(&src, &dest, "codex").unwrap();
+
+        assert!(dest.join("codex/manifest.json").is_file());
+        assert!(!dest.join("current").exists());
+    }
+
+    #[test]
+    fn the_base_url_names_the_slot() {
+        let dir = scratch("base-url").join("codex");
+        blob_export(&dir);
+
+        let info = read_export(&dir, Slot::Codex).unwrap();
+
+        assert!(info.base_url.ends_with("codex/"));
+    }
+
+    #[test]
     fn an_export_folder_is_found_from_its_parent() {
         let parent = scratch("parent");
         blob_export(&parent.join("mascot"));
