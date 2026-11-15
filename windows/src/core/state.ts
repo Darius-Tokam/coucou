@@ -307,6 +307,8 @@ class AppState {
   /** Which pills this build offers depends on it (Claude Desktop is Windows only). */
   os: HostOs = HOST_OS;
 
+  subagentKey: string | null = null;
+
   private listeners = new Set<Listener>();
 
   subscribe(fn: Listener): () => void {

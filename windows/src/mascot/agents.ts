@@ -1,4 +1,4 @@
-import type { MascotInfo, MascotSlot } from "../core/bridge";
+import type { MascotInfo, MascotSlot, MiniSlot } from "../core/bridge";
 import type { BotStateName } from "../core/layout";
 
 export type MascotFamily = MascotSlot;
@@ -328,11 +328,56 @@ export function positionKey(mascot: AgentMascot): string {
     : `${mascot.family}:project:${mascot.project}`;
 }
 
+export function placementFor(
+  mascot: AgentMascot,
+  live: readonly AgentMascot[],
+  positions: Readonly<Record<string, { x: number; y: number }>>,
+  sizePx: number,
+  towardLeft: boolean,
+): [number, number] | null {
+  const key = positionKey(mascot);
+  const position = positions[key];
+  if (!position) return null;
+  const index = live.indexOf(mascot);
+  const older = live
+    .slice(0, index < 0 ? 0 : index)
+    .filter((item) => positionKey(item) === key)
+    .length;
+  const shift = older * sizePx / 2 * (towardLeft ? -1 : 1);
+  return [position.x + shift, position.y];
+}
+
 export type MiniDisplay = "all" | "sessions" | "none";
 
 export function displayed(list: readonly AgentMascot[], mode: MiniDisplay): readonly AgentMascot[] {
   if (mode === "none") return [];
   return mode === "sessions" ? list.filter((mascot) => !mascot.subagent) : list;
+}
+
+interface MiniSlotSettings {
+  miniSize: number;
+  miniDisplay: MiniDisplay;
+  miniPositions: Readonly<Record<string, { x: number; y: number }>>;
+  scale: number;
+}
+
+export function slotsFor(
+  list: readonly AgentMascot[],
+  settings: MiniSlotSettings,
+  towardLeft: boolean,
+): MiniSlot[] {
+  const visible = displayed(list, settings.miniDisplay);
+  const counts = visibleSlots(visible.length);
+  const shown = visible.slice(0, counts.shown);
+  const slots = shown.map((mascot) => {
+    const size = settings.miniSize * (mascot.subagent ? 0.75 : 1);
+    return {
+      size,
+      at: placementFor(mascot, visible, settings.miniPositions, size * settings.scale, towardLeft),
+    };
+  });
+  if (counts.more > 0) slots.push({ size: settings.miniSize, at: null });
+  return slots;
 }
 
 export const agentMascots = new AgentMascots();

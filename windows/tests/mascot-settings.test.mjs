@@ -15,6 +15,27 @@ test("the settings offer a codex mascot", () => {
   assert.match(section.textContent, /Codex mascot/);
 });
 
+test("the settings offer size, display and subagent colors", () => {
+  const settings = {
+    islandAnchor: "corner",
+    miniSize: 90,
+    miniDisplay: "all",
+    subagentLooks: {},
+    knownSubagentTypes: ["Explore"],
+    miniPositions: { "claude:type:Explore": { x: 100, y: 100 } },
+  };
+  const section = mascotSection(() => settings, () => {});
+  const range = section.find("INPUT").find((input) => input.getAttribute("type") === "range");
+  assert.ok(range);
+  assert.equal(range.getAttribute("min"), "60");
+  assert.equal(range.getAttribute("max"), "120");
+  assert.equal(range.getAttribute("step"), "10");
+  assert.match(section.textContent, /Small mascots/);
+  assert.match(section.textContent, /Subagent colors/);
+  assert.match(section.textContent, /Explore/);
+  assert.match(section.textContent, /Put the mascots back in line/);
+});
+
 test("a folder that isn't an export says so", () => {
   assert.equal(importErrorText("not_an_export"), "This folder doesn't hold a MascotForge export.");
 });

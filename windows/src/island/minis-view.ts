@@ -1,13 +1,21 @@
 import { Bridge, type CornerLayout, type MascotInfo, type Rect } from "../core/bridge";
 import { State } from "../core/state";
-import { exportFor, visibleSlots, type AgentMascot } from "../mascot/agents";
+import {
+  colorForType, exportFor, visibleSlots, type AgentMascot,
+} from "../mascot/agents";
 import { MascotHost } from "../mascot/host";
 import { mascotStateFor, playsImmediately, shouldPause } from "../mascot/states";
+import { DRAG_THRESHOLD } from "../mochi/desktop-logic";
+import { DOUBLE_CLICK_MS } from "./corner";
 import { MochiCanvas } from "./mochi-canvas";
 
 export interface MiniHandlers {
-  open(pillId: string): void;
+  open(mascot: AgentMascot): void;
   more(): void;
+  dragStart(): void;
+  dragEnd(mascot: AgentMascot, at: { x: number; y: number }): Promise<void>;
+  dragCancel(): void;
+  reset(mascot: AgentMascot): Promise<void>;
 }
 
 class MiniMascotView {
@@ -27,6 +35,12 @@ class MiniMascotView {
   private playedMascotState = "";
   private label: string | null = null;
   private color: string | null = null;
+  private layout: CornerLayout | null = null;
+  private press: { pointerId: number; x: number; y: number; offsetX: number; offsetY: number } | null = null;
+  private pointerScreen: { x: number; y: number } | null = null;
+  private dragging = false;
+  private dragAt = { x: 0, y: 0 };
+  private clickTimer: number | null = null;
 
   constructor(root: HTMLElement, mascot: AgentMascot, handlers: MiniHandlers) {
     this.mascot = mascot;
@@ -59,16 +73,80 @@ class MiniMascotView {
     this.layer.addEventListener("pointerenter", () => this.setHovered(true));
     this.layer.addEventListener("pointerleave", () => this.setHovered(false));
     this.layer.addEventListener("click", () => {
-      if (this.host.active) this.host.poke();
-      handlers.open(this.mascot.pillId);
+      if (this.dragging) return;
+      if (this.clickTimer != null) window.clearTimeout(this.clickTimer);
+      this.clickTimer = window.setTimeout(() => {
+        this.clickTimer = null;
+        if (this.host.active) this.host.poke();
+        handlers.open(this.mascot);
+      }, DOUBLE_CLICK_MS);
+    });
+    this.layer.addEventListener("dblclick", (event) => {
+      event.preventDefault();
+      if (this.clickTimer != null) window.clearTimeout(this.clickTimer);
+      this.clickTimer = null;
+      void handlers.reset(this.mascot);
+    });
+    this.layer.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0 || !this.rect) return;
+      this.press = {
+        pointerId: event.pointerId,
+        x: event.clientX,
+        y: event.clientY,
+        offsetX: event.clientX - this.rect.x,
+        offsetY: event.clientY - this.rect.y,
+      };
+      this.layer.setPointerCapture(event.pointerId);
+    });
+    this.layer.addEventListener("pointermove", (event) => {
+      const press = this.press;
+      if (!press || press.pointerId !== event.pointerId || !this.layout) return;
+      this.rememberPointer(event.clientX, event.clientY);
+      if (!this.dragging) {
+        if (Math.hypot(event.clientX - press.x, event.clientY - press.y) <= DRAG_THRESHOLD) return;
+        this.dragging = true;
+        this.box.classList.add("dragging");
+        handlers.dragStart();
+      }
+      this.placeDragged();
+    });
+    this.layer.addEventListener("pointerup", (event) => {
+      if (!this.press || this.press.pointerId !== event.pointerId) return;
+      this.layer.releasePointerCapture(event.pointerId);
+      if (!this.dragging || !this.layout) {
+        this.press = null;
+        return;
+      }
+      this.rememberPointer(event.clientX, event.clientY);
+      this.placeDragged();
+      const at = {
+        x: this.layout.window.x + this.dragAt.x * this.layout.scale,
+        y: this.layout.window.y + this.dragAt.y * this.layout.scale,
+      };
+      this.press = null;
+      void handlers.dragEnd(this.mascot, at).finally(() => {
+        this.dragging = false;
+        this.pointerScreen = null;
+        this.box.classList.remove("dragging");
+      });
+    });
+    this.layer.addEventListener("pointercancel", (event) => {
+      if (!this.press || this.press.pointerId !== event.pointerId) return;
+      this.press = null;
+      if (!this.dragging) return;
+      this.dragging = false;
+      this.pointerScreen = null;
+      this.box.classList.remove("dragging");
+      handlers.dragCancel();
     });
 
     this.box.append(this.visual, label, this.layer);
     root.append(this.box);
   }
 
-  update(mascot: AgentMascot, info: MascotInfo | null, rect: Rect | null, color: string): void {
+  update(mascot: AgentMascot, info: MascotInfo | null, layout: CornerLayout, rect: Rect | null, color: string): void {
     this.mascot = mascot;
+    this.layout = layout;
     if (mascot.label !== this.label) {
       this.label = mascot.label;
       this.text.textContent = mascot.label;
@@ -80,7 +158,9 @@ class MiniMascotView {
     }
     this.rect = rect;
     this.box.style.display = rect ? "block" : "none";
-    if (rect) {
+    if (this.dragging) {
+      this.placeDragged();
+    } else if (rect) {
       Object.assign(this.box.style, {
         left: `${rect.x}px`,
         top: `${rect.y}px`,
@@ -96,6 +176,14 @@ class MiniMascotView {
       this.host.load(info);
       this.refresh();
     }
+    const look = mascot.subagent ? State.settings.subagentLooks[mascot.type ?? ""] : null;
+    this.host.setLook(mascot.subagent ? {
+      color,
+      material: info?.tintMaterial ?? null,
+      accessory: look?.accessory ?? null,
+      eyes: look?.eyes ?? null,
+      cheeks: look?.cheeks ?? null,
+    } : null);
     this.play();
   }
 
@@ -109,6 +197,7 @@ class MiniMascotView {
   }
 
   remove(): void {
+    if (this.clickTimer != null) window.clearTimeout(this.clickTimer);
     this.host.dispose();
     this.mochi.setShown(false);
     this.box.remove();
@@ -143,6 +232,24 @@ class MiniMascotView {
 
   private refresh(): void {
     this.mochi.setShown(!this.info || this.failed);
+  }
+
+  private rememberPointer(x: number, y: number): void {
+    if (!this.layout) return;
+    this.pointerScreen = {
+      x: this.layout.window.x + x * this.layout.scale,
+      y: this.layout.window.y + y * this.layout.scale,
+    };
+  }
+
+  private placeDragged(): void {
+    if (!this.layout || !this.pointerScreen || !this.press) return;
+    this.dragAt = {
+      x: (this.pointerScreen.x - this.layout.window.x) / this.layout.scale - this.press.offsetX,
+      y: (this.pointerScreen.y - this.layout.window.y) / this.layout.scale - this.press.offsetY,
+    };
+    this.box.style.left = `${this.dragAt.x}px`;
+    this.box.style.top = `${this.dragAt.y}px`;
   }
 }
 
@@ -182,8 +289,16 @@ export class MinisView {
         item = new MiniMascotView(this.root, mascot, this.handlers);
         this.items.set(mascot.key, item);
       }
-      const color = State.tasks.find((task) => task.id === mascot.pillId)?.color ?? "#9398a1";
-      item.update(mascot, exportFor(mascot.family, this.claude, this.codex), layout.minis[index] ?? null, color);
+      const color = mascot.subagent
+        ? colorForType(mascot.type ?? "", State.settings.subagentLooks)
+        : State.tasks.find((task) => task.id === mascot.pillId)?.color ?? "#9398a1";
+      item.update(
+        mascot,
+        exportFor(mascot.family, this.claude, this.codex),
+        layout,
+        layout.minis[index] ?? null,
+        color,
+      );
     });
 
     if (slots.more > 0) {

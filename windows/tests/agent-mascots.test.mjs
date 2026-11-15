@@ -8,7 +8,9 @@ import {
   displayed,
   exportFor,
   familyOf,
+  placementFor,
   positionKey,
+  slotsFor,
   visibleSlots,
 } from "../src/mascot/agents.ts";
 
@@ -274,4 +276,32 @@ test("sessions only hides subagents", () => {
 test("none hides everything", () => {
   mascots.apply(event("SessionStart"), 1000);
   assert.deepEqual(displayed(mascots.list, "none"), []);
+});
+
+test("a placed type comes back to its place", () => {
+  mascots.apply(event("SubagentStart", { agent_id: "a1", agent_type: "Explore" }), 1000);
+  const mascot = mascots.list[0];
+  assert.deepEqual(placementFor(mascot, mascots.list, {
+    "claude:type:Explore": { x: 320, y: 180 },
+  }, 90, true), [320, 180]);
+});
+
+test("a second one of the same type is shifted toward the centre", () => {
+  mascots.apply(event("SubagentStart", { agent_id: "a1", agent_type: "Explore" }), 1000);
+  mascots.apply(event("SubagentStart", { agent_id: "a2", agent_type: "Explore" }), 1001);
+  const positions = { "claude:type:Explore": { x: 320, y: 180 } };
+  assert.deepEqual(placementFor(mascots.list[1], mascots.list, positions, 90, true), [275, 180]);
+  assert.deepEqual(placementFor(mascots.list[1], mascots.list, positions, 90, false), [365, 180]);
+});
+
+test("sessions only sends no subagent slot", () => {
+  mascots.apply(event("SessionStart"), 1000);
+  mascots.apply(event("SubagentStart", { agent_id: "a1", agent_type: "Explore" }), 1001);
+  const settings = {
+    miniSize: 100,
+    miniDisplay: "sessions",
+    miniPositions: {},
+    scale: 1.5,
+  };
+  assert.deepEqual(slotsFor(mascots.list, settings, true), [{ size: 100, at: null }]);
 });

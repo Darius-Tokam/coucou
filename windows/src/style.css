@@ -90,6 +90,15 @@ body {
   transform: scale(0.97);
 }
 
+.mini-box.dragging {
+  z-index: 8;
+  transform: scale(0.97);
+}
+
+.mini-box.dragging .mini-layer {
+  cursor: grabbing;
+}
+
 .mini-visual {
   position: absolute;
   top: 0;
@@ -572,6 +581,11 @@ body {
   background: rgba(255, 255, 255, 0.15);
 }
 
+.btn:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.9);
+  outline-offset: 2px;
+}
+
 .btn .kbd {
   font-size: 10.5px;
   padding: 0 4px;
@@ -1012,6 +1026,45 @@ body {
 .actions {
   display: flex;
   gap: 8px;
+}
+
+.subagent-card {
+  padding: 12px 18px;
+  align-items: stretch;
+  gap: 7px;
+}
+
+.subagent-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.subagent-title .sub {
+  min-width: 0;
+  margin-left: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.subagent-steps {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 2px 12px;
+}
+
+.subagent-steps .sub,
+.subagent-answer {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.subagent-answer {
+  min-height: 16px;
+  color: var(--ink-2);
+  font: 400 12px var(--font);
 }
 
 /* Options to pick from when Claude Code asks a question. */

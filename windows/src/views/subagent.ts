@@ -1,0 +1,87 @@
+import type { BotStateName } from "../core/layout";
+import { State } from "../core/state";
+import { t, tl } from "../i18n/i18n";
+import { agentMascots, colorForType, type AgentMascot } from "../mascot/agents";
+import { clear, h } from "./dom";
+import { subagentCard } from "./subagent-card";
+import type { ViewActions, ViewHost } from "./views";
+
+export { subagentCard } from "./subagent-card";
+
+function copyMascot(mascot: AgentMascot): AgentMascot {
+  return { ...mascot, steps: [...mascot.steps] };
+}
+
+function stateLabel(state: BotStateName): string {
+  switch (state) {
+    case "idle": return t("Idle");
+    case "working": return t("Working");
+    case "thinking": return t("Thinking");
+    case "searching": return t("Searching…");
+    case "approval": return t("Needs approval");
+    case "question": return t("Question");
+    case "error": return t("Error");
+    case "finished": return t("finished");
+    case "ratelimit": return t("Rate limit");
+    case "sleeping": return t("Sleeping");
+    case "dizzy": return t("Dizzy");
+  }
+}
+
+export function buildSubagent(actions: Pick<ViewActions, "openPill">): ViewHost {
+  const body = h("div", { class: "stack subagent-card" });
+  const el = h("div", { class: "view" }, h("div", { class: "card" }, body));
+  let shownKey: string | null = null;
+  let snapshot: AgentMascot | null = null;
+  let rendered = "";
+
+  return {
+    el,
+    sync() {
+      const key = State.subagentKey;
+      if (key !== shownKey) {
+        shownKey = key;
+        snapshot = null;
+        rendered = "";
+      }
+      if (!key) {
+        clear(body);
+        return;
+      }
+      const live = agentMascots.list.find((mascot) => mascot.key === key);
+      if (live) snapshot = copyMascot(live);
+      if (!snapshot) return;
+      const color = snapshot.type
+        ? colorForType(snapshot.type, State.settings.subagentLooks)
+        : "#9398a1";
+      const card = subagentCard(snapshot, color);
+      const renderKey = JSON.stringify(card);
+      if (renderKey === rendered) return;
+      rendered = renderKey;
+      clear(body);
+      const title = h(
+        "div",
+        { class: "subagent-title" },
+        h("i", { class: "mini-dot", style: `background:${card.color}` }),
+        h("span", { class: "title", text: card.title }),
+        h("span", { class: "sub", text: `${card.project} · ${stateLabel(card.state)}` }),
+      );
+      const steps = h("div", { class: "subagent-steps" });
+      for (const step of card.steps) steps.append(h("div", { class: "sub", text: step }));
+      const answer = h("div", {
+        class: "subagent-answer",
+        text: card.finalText ?? "",
+      });
+      const session = h(
+        "button",
+        {
+          class: "btn secondary",
+          type: "button",
+          onclick: () => snapshot && actions.openPill(snapshot.pillId),
+        },
+        h("span", { text: tl("Session") }),
+      );
+      body.append(title, steps, answer, h("div", { class: "actions" }, session));
+    },
+  };
+}

@@ -1541,7 +1541,7 @@ async function render() {
   const sections: Partial<Record<PageId, () => HTMLElement[]>> = {
     // Corner mode is Windows only (island/corner.ts).
     general: () => [
-      ...(CORNER_SUPPORTED ? [mascotSection(() => settings, () => void save())] : []),
+      ...(CORNER_SUPPORTED ? [mascotSection(() => settings, () => save())] : []),
       generalSection(),
     ],
     pills: () => [activePillsSection(connected)],

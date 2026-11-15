@@ -6,6 +6,7 @@
 
 import type { CornerLayout, Rect } from "../core/bridge";
 import type { IslandViewName } from "../core/layout";
+import type { AgentMascot } from "../mascot/agents";
 
 /** Corner mode exists on Windows only: gtk-layer-shell keeps the Linux island at the top. */
 export const CORNER_SUPPORTED =
@@ -43,6 +44,14 @@ export function miniClickAction(s: {
   return s.approvalWaits
     ? { changeFocus: false, view: s.defaultView }
     : { changeFocus: true, view: "overview" };
+}
+
+export function miniClickTarget(
+  mascot: AgentMascot,
+  approvalWaits: boolean,
+): "approval" | "subagent" | "session" {
+  if (approvalWaits) return "approval";
+  return mascot.subagent ? "subagent" : "session";
 }
 
 /** The cursor (window-logical) in the mascot's own coordinates, and whether it is on it. */

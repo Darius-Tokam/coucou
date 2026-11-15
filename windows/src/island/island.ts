@@ -35,11 +35,13 @@ import { restoreAlertFocus } from "./hooks";
 import { DesktopLink } from "./desktop";
 import {
   CORNER_HOVER_CLOSE_S, CORNER_SUPPORTED, HoverStart, MASCOT_SIZE, cornerRects, mascotClickAction,
-  miniClickAction, placeInPanel,
+  miniClickTarget, placeInPanel,
 } from "./corner";
 import { CornerView } from "./corner-view";
 import { cornerAgentState } from "../mascot/states";
-import { agentMascots, visibleSlots } from "../mascot/agents";
+import {
+  agentMascots, displayed, positionKey, slotsFor, type AgentMascot,
+} from "../mascot/agents";
 import { MinisView } from "./minis-view";
 import type { ViewCommand } from "./shortcuts";
 import { DRAG_THRESHOLD } from "../mochi/desktop-logic";
@@ -140,7 +142,7 @@ export class Island {
   corner!: CornerView;
   /** Corner mode's small mascots, one per running agent. */
   minis!: MinisView;
-  private cornerMiniCount = -1;
+  private cornerMinisKey = "";
   private miniWakeTimer: number | null = null;
   private miniWakeAt: number | null = null;
   private pushedRects = "";
@@ -239,6 +241,10 @@ export class Island {
         // after looking at another pill brings the card up again.
         const req = State.pendingApproval;
         if (req?.pillId === id) this.setView(req.questions ? "question" : "approval");
+      },
+      openPill: (pillId) => {
+        State.setFocus(pillId);
+        this.setView("overview");
       },
       openTerminal: () => {
         const task = State.focusTask;
@@ -440,8 +446,24 @@ export class Island {
       canDrag: () => this.collapsed,
     });
     this.minis = new MinisView(this.root, {
-      open: (pillId) => this.openMini(pillId),
+      open: (mascot) => this.openMini(mascot),
       more: () => this.clickMascot(),
+      dragStart: () => void Bridge.cornerMiniDrag(true),
+      dragEnd: async (mascot, at) => {
+        State.settings.miniPositions[positionKey(mascot)] = at;
+        State.notify();
+        try {
+          await Bridge.saveSettings(State.settings);
+        } finally {
+          await Bridge.cornerMiniDrag(false);
+        }
+      },
+      dragCancel: () => void Bridge.cornerMiniDrag(false),
+      reset: async (mascot) => {
+        delete State.settings.miniPositions[positionKey(mascot)];
+        State.notify();
+        await Bridge.saveSettings(State.settings);
+      },
     });
     this.applyGeometry();
   }
@@ -541,6 +563,7 @@ export class Island {
   }
 
   expand(view: IslandViewName) {
+    if (view !== "subagent") this.closeSubagent();
     this.stopSequenceIfLeaving(view);
     if (view !== "overview") closePlanCard();
     State.view = view;
@@ -551,6 +574,7 @@ export class Island {
   }
 
   setView(view: IslandViewName) {
+    if (view !== "subagent") this.closeSubagent();
     this.stopSequenceIfLeaving(view);
     if (view !== "overview") closePlanCard();
     if (State.mode !== "expanded") {
@@ -573,6 +597,7 @@ export class Island {
       this.foldApproval();
       return;
     }
+    this.closeSubagent();
     State.isPinned = false;
     this.fsm.pinned = false;
     // Drive the state machine rather than the mode: setting the mode behind its
@@ -978,6 +1003,9 @@ export class Island {
   setCornerLayout(layout: CornerLayout) {
     this.cornerLayout = layout;
     this.corner.setLayout(layout);
+    if (this.cornerMode) {
+      this.minis.render(displayed(agentMascots.list, State.settings.miniDisplay), layout);
+    }
     this.applyGeometry();
     this.ensureRunning();
   }
@@ -1015,20 +1043,44 @@ export class Island {
     else this.fsm.forceHome();
   }
 
-  private openMini(pillId: string) {
+  private openMini(mascot: AgentMascot) {
     Sound.resume();
     const now = performance.now();
     State.lastActivity = now;
-    const action = miniClickAction({
-      approvalWaits: State.pendingApproval != null,
-      defaultView: State.defaultView(),
-    });
-    if (action.changeFocus) State.setFocus(pillId);
+    const target = miniClickTarget(mascot, State.pendingApproval != null);
+    if (target === "subagent") {
+      this.openSubagent(mascot.key);
+      return;
+    }
+    if (target === "session") State.setFocus(mascot.pillId);
     this.cornerOpenedAt = now;
     this.fsm.pinned = true;
     State.isPinned = true;
     this.fsm.forceHome();
-    this.expand(action.view);
+    this.expand(target === "approval" ? State.defaultView() : "overview");
+  }
+
+  openSubagent(key: string) {
+    const now = performance.now();
+    State.lastActivity = now;
+    this.cornerOpenedAt = now;
+    this.fsm.pinned = true;
+    State.isPinned = true;
+    if (State.pendingApproval) {
+      this.closeSubagent();
+      this.fsm.forceHome();
+      this.expand(State.defaultView());
+      return;
+    }
+    State.subagentKey = key;
+    this.fsm.forceHome();
+    this.expand("subagent");
+  }
+
+  private closeSubagent() {
+    if (State.subagentKey == null) return;
+    State.subagentKey = null;
+    this.views?.get("subagent")?.sync();
   }
 
   /** Island rect in window coordinates (origin top-left of the 720×320 window). */
@@ -1489,16 +1541,40 @@ export class Island {
 
   private syncAgentMascots(now: number) {
     agentMascots.tick(now);
-    const slots = visibleSlots(agentMascots.list.length);
-    const count = this.cornerMode ? slots.shown + (slots.more > 0 ? 1 : 0) : 0;
-    if (count !== this.cornerMiniCount) {
-      this.cornerMiniCount = count;
-      void Bridge.setCornerMinis(Array.from({ length: count }, () => ({ size: 120, at: null })));
+    const unknownTypes = agentMascots.list
+      .filter((mascot) => mascot.subagent && mascot.type)
+      .map((mascot) => mascot.type as string)
+      .filter((type) => !State.settings.knownSubagentTypes.includes(type));
+    if (unknownTypes.length > 0) {
+      State.settings.knownSubagentTypes.push(...new Set(unknownTypes));
+      void Bridge.saveSettings(State.settings);
+      State.notify();
     }
-    if (this.cornerLayout) {
-      this.minis.render(this.cornerMode ? agentMascots.list : [], this.cornerLayout);
+    const visible = displayed(agentMascots.list, State.settings.miniDisplay);
+    const layout = this.cornerLayout;
+    const slots = this.cornerMode ? slotsFor(agentMascots.list, {
+      miniSize: State.settings.miniSize,
+      miniDisplay: State.settings.miniDisplay,
+      miniPositions: State.settings.miniPositions,
+      scale: layout?.scale ?? 1,
+    }, layout ? this.minisTowardLeft(layout) : true) : [];
+    const key = JSON.stringify(slots);
+    if (key !== this.cornerMinisKey) {
+      this.cornerMinisKey = key;
+      void Bridge.setCornerMinis(slots);
+    }
+    if (layout) {
+      this.minis.render(this.cornerMode ? visible : [], layout);
     }
     this.scheduleMiniWake(agentMascots.nextChangeAt(), now);
+  }
+
+  private minisTowardLeft(layout: CornerLayout): boolean {
+    const screen = window.screen as Screen & { availLeft?: number };
+    const screenLeft = (screen.availLeft ?? 0) * layout.scale;
+    const screenCentre = screenLeft + screen.availWidth * layout.scale / 2;
+    const mascotCentre = layout.window.x + (layout.mascot.x + layout.mascot.w / 2) * layout.scale;
+    return mascotCentre >= screenCentre;
   }
 
   private scheduleMiniWake(next: number | null, now: number) {
