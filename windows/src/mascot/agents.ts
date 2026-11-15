@@ -74,6 +74,15 @@ interface TrackedMascot extends AgentMascot {
 
 const DEPARTURES = new Set(["SubagentStop", "SessionEnd"]);
 
+/**
+ * Whether `e` ends its mascot. A Codex session's pill goes 5.2 s after Stop
+ * (hooks.ts: external agents), and `codex exec` never sends SessionEnd: its
+ * mascot goes with its turn too.
+ */
+function departs(e: AgentEvent, subagent: boolean): boolean {
+  return DEPARTURES.has(e.name) || (e.name === "Stop" && e.family === "codex" && !subagent);
+}
+
 function stateFor(e: AgentEvent): BotStateName | null {
   switch (e.name) {
     case "SessionStart":
@@ -134,7 +143,7 @@ export class AgentMascots {
         }
       }
     }
-    if (!mascot && DEPARTURES.has(e.name)) return changed;
+    if (!mascot && departs(e, subagent)) return changed;
 
     const state = stateFor(e);
     if (!mascot) {
@@ -172,7 +181,7 @@ export class AgentMascots {
       mascot.idleAt = null;
       mascot.sleepAt = mascot.transitionAt + SLEEP_MS;
     }
-    if (DEPARTURES.has(e.name)) {
+    if (departs(e, subagent)) {
       mascot.removeAt = now + LEAVE_MS;
       mascot.idleAt = null;
       mascot.sleepAt = null;

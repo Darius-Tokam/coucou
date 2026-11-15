@@ -175,3 +175,22 @@ test("session end also removes its subagents", () => {
 
   assert.deepEqual(mascots.list.map((mascot) => mascot.key), ["claude:s2:b1"]);
 });
+
+test("a codex session leaves after its turn, like its pill", () => {
+  const codex = (name) => agentEventFrom({ hook_event_name: name, session_id: "c1", coucou_agent: "codex" }, "agent_codex", "coucou");
+  mascots.apply(codex("UserPromptSubmit"), 1000);
+  mascots.apply(codex("Stop"), 2000);
+  assert.equal(mascots.list[0].state, "finished");
+  mascots.tick(4999);
+  assert.equal(mascots.list.length, 1);
+  mascots.tick(5000);
+  assert.equal(mascots.list.length, 0);
+});
+
+test("a claude session stays after its turn", () => {
+  mascots.apply(event("UserPromptSubmit"), 1000);
+  mascots.apply(event("Stop"), 2000);
+  mascots.tick(5000);
+  assert.equal(mascots.list.length, 1);
+  assert.equal(mascots.list[0].state, "idle");
+});
