@@ -54,7 +54,12 @@ export class MascotHost {
     }
   };
 
-  constructor(private readonly container: HTMLElement, options: MascotHostOptions = {}) {
+  // A plain field, not a parameter property: the tests load this file with
+  // Node's type stripping, which can't run parameter properties.
+  private readonly container: HTMLElement;
+
+  constructor(container: HTMLElement, options: MascotHostOptions = {}) {
+    this.container = container;
     this.mini = options.mini === true;
     this.thumb = options.thumb === true;
     window.addEventListener("message", this.messageListener);
