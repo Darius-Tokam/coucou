@@ -102,6 +102,18 @@ export function cornerRects(layout: CornerLayout, card: Rect | null): Rect[] {
   return card ? [card, layout.mascot, ...layout.minis] : [layout.mascot, ...layout.minis];
 }
 
+/** A mini's physical screen rectangle, for Rust to anchor the subagent card. */
+export function miniScreenRect(layout: CornerLayout, index: number): Rect | null {
+  const mini = layout.minis[index];
+  if (!mini) return null;
+  return {
+    x: layout.window.x + mini.x * layout.scale,
+    y: layout.window.y + mini.y * layout.scale,
+    w: mini.w * layout.scale,
+    h: mini.h * layout.scale,
+  };
+}
+
 /**
  * The island card of size w × h inside the panel area, against the mascot's
  * side: right-aligned when the mascot is on its right, bottom-aligned when the

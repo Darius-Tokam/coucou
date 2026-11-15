@@ -3,7 +3,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { CORNER_HOVER_CLOSE_S, clampMascotSize, cornerRects, placeInPanel } from "../src/island/corner.ts";
+import { CORNER_HOVER_CLOSE_S, clampMascotSize, cornerRects, miniScreenRect, placeInPanel } from "../src/island/corner.ts";
 
 // Mascot bottom-right of the screen: the panel area is on its left, bottom-aligned.
 const BOTTOM_RIGHT = {
@@ -36,6 +36,19 @@ test("the panel takes the mouse before placed minis", () => {
   const card = { x: 120, y: 130, w: 600, h: 190 };
   const layout = { ...BOTTOM_RIGHT, minis: [r1, r2] };
   assert.deepEqual(cornerRects(layout, card), [card, layout.mascot, r1, r2]);
+});
+
+test("the clicked mini becomes a physical screen anchor", () => {
+  const layout = {
+    window: { x: 100, y: 200, w: 900, h: 600 },
+    mascot: { x: 700, y: 360, w: 160, h: 160 },
+    panel: null,
+    minis: [{ x: 20, y: 30, w: 90, h: 90 }],
+    scale: 1.5,
+  };
+
+  assert.deepEqual(miniScreenRect(layout, 0), { x: 130, y: 245, w: 135, h: 135 });
+  assert.equal(miniScreenRect(layout, 1), null);
 });
 
 test("the corner closes faster than the top island", () => {

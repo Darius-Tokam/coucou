@@ -35,7 +35,7 @@ import { restoreAlertFocus } from "./hooks";
 import { DesktopLink } from "./desktop";
 import {
   CORNER_HOVER_CLOSE_S, CORNER_SUPPORTED, HoverStart, MASCOT_SIZE, clampMascotSize, cornerRects,
-  mascotClickAction, miniClickTarget, placeInPanel,
+  mascotClickAction, miniClickTarget, miniScreenRect, placeInPanel,
 } from "./corner";
 import { CornerView } from "./corner-view";
 import { cornerAgentState } from "../mascot/states";
@@ -1083,7 +1083,12 @@ export class Island {
     }
     // Opening goes through the default view (fsm "home" → expand), which
     // closes any subagent card: the key is set only once that has happened.
+    const layout = this.cornerLayout;
+    const index = displayed(agentMascots.list, State.settings.miniDisplay)
+      .findIndex((mascot) => mascot.key === key);
+    const anchor = this.cornerMode && layout && index >= 0 ? miniScreenRect(layout, index) : null;
     this.fsm.forceHome();
+    void Bridge.cornerPanelAnchor(anchor);
     State.subagentKey = key;
     this.expand("subagent");
   }
@@ -1091,6 +1096,7 @@ export class Island {
   private closeSubagent() {
     if (State.subagentKey == null) return;
     State.subagentKey = null;
+    void Bridge.cornerPanelAnchor(null);
     this.views?.get("subagent")?.sync();
   }
 

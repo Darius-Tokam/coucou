@@ -297,6 +297,7 @@ export const Bridge = {
   setCornerMinis: (slots: MiniSlot[], dragging: boolean) =>
     call<void>("set_corner_minis", { slots, dragging }),
   cornerMiniDrag: (on: boolean) => call<void>("corner_mini_drag", { on }),
+  cornerPanelAnchor: (anchor: Rect | null) => call<void>("corner_panel_anchor", { anchor }),
   reposition: () => call<void>("reposition"),
   fitZoom: (dpr: number) => call<boolean>("fit_zoom", { dpr }),
 
