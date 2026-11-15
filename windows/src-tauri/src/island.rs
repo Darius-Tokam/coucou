@@ -149,8 +149,9 @@ pub fn corner_layout(
     panel: Option<(f64, f64)>,
     minis: &[MiniSlot],
     dragging: bool,
+    mascot_size: f64,
 ) -> CornerLayout {
-    let size = MASCOT_SIZE * scale;
+    let size = mascot_size * scale;
     let margin = CORNER_MARGIN * scale;
     let (right, bottom) = (work.x + work.w, work.y + work.h);
     let home = (right - margin - size, bottom - margin - size);
@@ -168,7 +169,7 @@ pub fn corner_layout(
         let Some((pw, ph)) = panel else {
             return CornerLayout {
                 window: mascot,
-                mascot: IslandRect { x: 0.0, y: 0.0, w: MASCOT_SIZE, h: MASCOT_SIZE },
+                mascot: IslandRect { x: 0.0, y: 0.0, w: mascot_size, h: mascot_size },
                 panel: None,
                 minis: Vec::new(),
                 scale,
@@ -825,6 +826,11 @@ fn apply_corner(win: &WebviewWindow, m: &Monitor, corner_pos: Option<(f64, f64)>
         .map(|other| other.scale_factor())
         .unwrap_or_else(|| m.scale_factor());
     let minis = CORNER_MINIS.lock().unwrap().clone();
+    let mascot_size = win
+        .app_handle()
+        .try_state::<crate::Shared>()
+        .map(|shared| shared.settings.lock().unwrap().mascot_size)
+        .unwrap_or(MASCOT_SIZE);
     let layout = corner_layout(
         work,
         scale,
@@ -832,6 +838,7 @@ fn apply_corner(win: &WebviewWindow, m: &Monitor, corner_pos: Option<(f64, f64)>
         open.then_some((PANEL_W, PANEL_H)),
         &minis,
         CORNER_MINI_DRAG.load(Ordering::Relaxed),
+        mascot_size,
     );
     remember_mascot_offset(&layout, scale);
     let w = layout.window;

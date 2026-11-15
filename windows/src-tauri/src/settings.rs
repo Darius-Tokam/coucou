@@ -1,7 +1,7 @@
 // Preferences, stored as plain JSON in settings.json under platform::config_dir().
 // No secret ever lands here — API keys live in the OS keychain (see secrets.rs).
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
 use std::io::ErrorKind;
@@ -128,6 +128,9 @@ pub struct Settings {
     /// last dropped it; None for the bottom-right corner. Owned by Rust
     /// (lib.rs saves it when the window is dragged), like `desktop_mochi`.
     pub corner_pos: Option<CornerPos>,
+    /// Logical side of the big corner mascot.
+    #[serde(default = "default_mascot_size", deserialize_with = "deserialize_mascot_size")]
+    pub mascot_size: f64,
     /// Logical side of a session mini; subagents use three quarters of it.
     pub mini_size: f64,
     /// Which agent minis the corner shows: "all", "sessions" or "none".
@@ -174,6 +177,17 @@ pub struct DesktopSpot {
 
 fn default_model() -> String {
     crate::claude::DEFAULT_MODEL.to_string()
+}
+
+fn default_mascot_size() -> f64 {
+    240.0
+}
+
+fn deserialize_mascot_size<'de, D>(deserializer: D) -> Result<f64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Ok(f64::deserialize(deserializer)?.clamp(120.0, 240.0))
 }
 
 impl Default for Settings {
@@ -228,6 +242,7 @@ impl Default for Settings {
             // Corner mode is Windows only (island.rs corner_mode).
             island_anchor: if cfg!(windows) { "corner" } else { "top" }.into(),
             corner_pos: None,
+            mascot_size: default_mascot_size(),
             mini_size: 120.0,
             mini_display: "all".into(),
             subagent_looks: BTreeMap::new(),
