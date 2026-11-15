@@ -30,6 +30,14 @@ test("open corner hits the mascot and the island card", () => {
   assert.deepEqual(cornerRects(BOTTOM_RIGHT, card), [BOTTOM_RIGHT.mascot, card]);
 });
 
+test("minis take the mouse too", () => {
+  const r1 = { x: 592, y: 120, w: 120, h: 120 };
+  const r2 = { x: 464, y: 120, w: 120, h: 120 };
+  const card = { x: 120, y: 130, w: 600, h: 190 };
+  const layout = { ...BOTTOM_RIGHT, minis: [r1, r2] };
+  assert.deepEqual(cornerRects(layout, card), [layout.mascot, r1, r2, card]);
+});
+
 test("the corner closes faster than the top island", () => {
   assert.equal(CORNER_HOVER_CLOSE_S, 0.3);
 });

@@ -2,7 +2,18 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { installFakeDom } from "./fakedom.mjs";
 import { importErrorText } from "../src/settings/mascot-errors.ts";
+import { mascotSection } from "../src/settings/mascot.ts";
+
+installFakeDom();
+
+test("the settings offer a codex mascot", () => {
+  const section = mascotSection(() => ({ islandAnchor: "corner" }), () => {});
+  const choose = section.find("BUTTON").filter((button) => button.textContent === "Choose a MascotForge folder");
+  assert.equal(choose.length, 2);
+  assert.match(section.textContent, /Codex mascot/);
+});
 
 test("a folder that isn't an export says so", () => {
   assert.equal(importErrorText("not_an_export"), "This folder doesn't hold a MascotForge export.");

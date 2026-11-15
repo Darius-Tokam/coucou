@@ -74,7 +74,7 @@ export class HoverStart {
 
 /** What takes the mouse: the mascot, and the island card while it is open. */
 export function cornerRects(layout: CornerLayout, card: Rect | null): Rect[] {
-  return card ? [layout.mascot, card] : [layout.mascot];
+  return card ? [layout.mascot, ...layout.minis, card] : [layout.mascot, ...layout.minis];
 }
 
 /**

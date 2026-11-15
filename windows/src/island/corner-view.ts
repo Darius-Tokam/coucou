@@ -7,9 +7,9 @@ import { Bridge, type CornerLayout, type MascotInfo } from "../core/bridge";
 import type { BotStateName } from "../core/layout";
 import { MascotHost } from "../mascot/host";
 import { mascotStateFor, playsImmediately } from "../mascot/states";
-import { BotEngine } from "../mochi/engine";
 import { DRAG_THRESHOLD } from "../mochi/desktop-logic";
 import { mascotPointer } from "./corner";
+import { MochiCanvas } from "./mochi-canvas";
 
 /** What the island does when the mascot is hovered, left or clicked. */
 export interface CornerHandlers {
@@ -21,9 +21,6 @@ export interface CornerHandlers {
   /** Only a closed corner can be dragged: the window is then the mascot. */
   canDrag(): boolean;
 }
-
-/** Mochi's frame pace in the corner, like on the desktop (desktop/main.ts). */
-const MOCHI_FRAME_MS = 1000 / 30;
 
 export class CornerView {
   private readonly box: HTMLDivElement;
@@ -38,21 +35,17 @@ export class CornerView {
   /** The pointer is on the mascot: a calm mascot plays its hover animation. */
   private hovered = false;
 
-  private readonly mochiCanvas: HTMLCanvasElement;
-  private readonly mochi = new BotEngine();
-  private mochiTimer: number | null = null;
-  private lastDraw = 0;
+  private readonly mochi: MochiCanvas;
 
   private press: { x: number; y: number } | null = null;
 
   constructor(root: HTMLElement, private readonly handlers: CornerHandlers) {
     this.box = document.createElement("div");
     this.box.className = "mascot-box";
-    this.mochiCanvas = document.createElement("canvas");
-    this.mochiCanvas.className = "mascot-mochi";
+    this.mochi = new MochiCanvas(this.box);
     this.layer = document.createElement("div");
     this.layer.className = "mascot-layer";
-    this.box.append(this.mochiCanvas, this.layer);
+    this.box.append(this.layer);
     root.append(this.box);
     // The iframe it adds stays under the mouse layer (z-index in style.css).
     this.host = new MascotHost(this.box);
@@ -133,45 +126,7 @@ export class CornerView {
   /** Mochi draws only when he is the one shown. */
   private refresh() {
     const mochiShown = this.enabled && (!this.info || this.failed);
-    this.mochiCanvas.style.display = mochiShown ? "block" : "none";
-    if (mochiShown) this.scheduleMochi();
-    else if (this.mochiTimer != null) {
-      window.clearTimeout(this.mochiTimer);
-      this.mochiTimer = null;
-    }
-  }
-
-  private scheduleMochi() {
-    if (this.mochiTimer != null) return;
-    const due = Math.max(0, this.lastDraw + MOCHI_FRAME_MS - performance.now());
-    this.mochiTimer = window.setTimeout(() => {
-      requestAnimationFrame((now) => {
-        this.mochiTimer = null;
-        if (!this.enabled || (this.info && !this.failed)) return;
-        this.drawMochi(now);
-        this.scheduleMochi();
-      });
-    }, due);
-  }
-
-  private drawMochi(now: number) {
-    const ctx = this.mochiCanvas.getContext("2d");
-    if (!ctx) return;
-    const dt = Math.min(0.05, Math.max(0, (now - this.lastDraw) / 1000));
-    this.lastDraw = now;
-    const size = this.box.clientWidth || 200;
-    const drawW = size * 0.8;
-    const dpr = Math.min(2, window.devicePixelRatio || 1);
-    // Both sides: a fresh canvas is 300 × 150, and 300 is already the width at 1.5×.
-    const side = Math.round(size * dpr);
-    if (this.mochiCanvas.width !== side || this.mochiCanvas.height !== side) {
-      this.mochiCanvas.width = side;
-      this.mochiCanvas.height = side;
-    }
-    this.mochi.update(dt);
-    ctx.setTransform(dpr, 0, 0, dpr, ((size - drawW) / 2) * dpr, 0);
-    ctx.clearRect(-(size - drawW) / 2, 0, size, size);
-    this.mochi.draw(ctx, drawW, size);
+    this.mochi.setShown(mochiShown);
   }
 
   private wireInput() {

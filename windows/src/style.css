@@ -79,6 +79,98 @@ body {
   cursor: grab;
 }
 
+.mini-box {
+  position: absolute;
+  display: none;
+  background: transparent;
+  transition: transform 120ms ease-out;
+}
+
+.mini-box:has(.mini-layer:active) {
+  transform: scale(0.97);
+}
+
+.mini-visual {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: calc(100% - 20px);
+  aspect-ratio: 1;
+  transform: translateX(-50%);
+}
+
+.mini-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.mini-layer:focus-visible,
+.mini-more:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.9);
+  outline-offset: -2px;
+}
+
+.mini-label {
+  position: absolute;
+  right: 4px;
+  bottom: 2px;
+  left: 4px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 0;
+  height: 20px;
+  padding: 0 7px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  background: rgba(14, 15, 17, 0.82);
+  color: var(--ink-2);
+  font: 500 10px var(--font);
+  backdrop-filter: blur(8px);
+}
+
+.mini-dot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.mini-label-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mini-more {
+  position: absolute;
+  display: none;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 18px;
+  background: rgba(20, 21, 24, 0.88);
+  color: var(--ink);
+  font: 700 18px var(--font);
+  cursor: pointer;
+  transition: transform 120ms ease-out, background 120ms ease-out;
+  backdrop-filter: blur(10px);
+}
+
+.mini-more:hover {
+  background: rgba(29, 31, 35, 0.94);
+}
+
+.mini-more:active {
+  transform: scale(0.97);
+}
+
 /* Invisible strip that wakes the island when it is hidden. */
 #wake-strip {
   position: fixed;

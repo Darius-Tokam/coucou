@@ -67,12 +67,20 @@ async function main() {
 
   // Corner mode: where Rust put the mascot, and which MascotForge mascot it is.
   await onEvent<CornerLayout>("corner-layout", (layout) => island.setCornerLayout(layout));
-  await onEvent<MascotChanged>("mascot-changed", ({ slot, info }) => {
-    if (slot === "claude") island.corner.load(info);
+  const loadMascots = async (reloadCorner: boolean) => {
+    const [claude, codex] = await Promise.all([
+      Bridge.mascotCurrent("claude"),
+      Bridge.mascotCurrent("codex"),
+    ]);
+    if (reloadCorner) island.corner.load(claude);
+    island.minis.setExports(claude, codex);
+  };
+  await onEvent<MascotChanged>("mascot-changed", ({ slot }) => {
+    void loadMascots(slot === "claude");
   });
   // Folded in a corner, Rust still reports a cursor near the mascot: he follows it.
-  await onEvent<{ x: number; y: number }>("mascot-cursor", (p) => island.corner.pointer(p.x, p.y));
-  island.corner.load(await Bridge.mascotCurrent("claude"));
+  await onEvent<{ x: number; y: number }>("mascot-cursor", (p) => island.onMascotCursor(p.x, p.y));
+  await loadMascots(true);
   // Rust placed the window before this page listened: ask again to hear where.
   void Bridge.reposition();
 

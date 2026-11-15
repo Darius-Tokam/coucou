@@ -38,6 +38,8 @@ import {
 } from "./corner";
 import { CornerView } from "./corner-view";
 import { cornerAgentState } from "../mascot/states";
+import { agentMascots, visibleSlots } from "../mascot/agents";
+import { MinisView } from "./minis-view";
 import type { ViewCommand } from "./shortcuts";
 import { DRAG_THRESHOLD } from "../mochi/desktop-logic";
 import { Updates } from "./update";
@@ -135,6 +137,11 @@ export class Island {
   private cornerLayout: CornerLayout | null = null;
   /** Corner mode's mascot: a MascotForge export, or Mochi. */
   corner!: CornerView;
+  /** Corner mode's small mascots, one per running agent. */
+  minis!: MinisView;
+  private cornerMiniCount = -1;
+  private miniWakeTimer: number | null = null;
+  private miniWakeAt: number | null = null;
   private pushedRects = "";
   /** Corner mode: one hover per stay of the pointer on the folded mascot. */
   private cornerHover = new HoverStart();
@@ -430,6 +437,10 @@ export class Island {
         if (this.collapsed) this.fsm.mouseLeft();
       },
       canDrag: () => this.collapsed,
+    });
+    this.minis = new MinisView(this.root, {
+      open: (pillId) => this.openMini(pillId),
+      more: () => this.clickMascot(),
     });
     this.applyGeometry();
   }
@@ -1003,6 +1014,18 @@ export class Island {
     else this.fsm.forceHome();
   }
 
+  private openMini(pillId: string) {
+    Sound.resume();
+    const now = performance.now();
+    State.lastActivity = now;
+    State.setFocus(pillId);
+    this.cornerOpenedAt = now;
+    this.fsm.pinned = true;
+    State.isPinned = true;
+    this.fsm.forceHome();
+    this.expand("overview");
+  }
+
   /** Island rect in window coordinates (origin top-left of the 720×320 window). */
   private islandRect(): { x: number; y: number; w: number; h: number } {
     const w = this.width.value;
@@ -1268,7 +1291,7 @@ export class Island {
     // While the card is open the poll reports the pointer: a stay on the mascot
     // carries on, so a click that folds the card doesn't start a new hover.
     if (onMascot) this.cornerHover.enter(performance.now());
-    if (this.cornerMode) this.corner.pointer(x, y);
+    if (this.cornerMode) this.onMascotCursor(x, y);
     const inIsland = onMascot || (
       x >= rect.x - HIT_MARGIN && x <= rect.x + rect.w + HIT_MARGIN &&
       y >= rect.y - HIT_MARGIN && y <= rect.y + rect.h + HIT_MARGIN);
@@ -1300,6 +1323,11 @@ export class Island {
     }
 
     this.ensureRunning();
+  }
+
+  onMascotCursor(x: number, y: number) {
+    this.corner.pointer(x, y);
+    this.minis.pointer(x, y);
   }
 
   /** The greeting and the drop sequence draw a Mochi of their own: not that one. */
@@ -1379,6 +1407,7 @@ export class Island {
   private frame = (nowMs: number) => {
     const dt = Math.min(0.05, (nowMs - this.lastFrame) / 1000);
     this.lastFrame = nowMs;
+    this.syncAgentMascots(nowMs);
 
     this.width.step(dt, nowMs);
     this.height.step(dt, nowMs);
@@ -1452,6 +1481,33 @@ export class Island {
       Sound.idle();
     }
   };
+
+  private syncAgentMascots(now: number) {
+    agentMascots.tick(now);
+    const slots = visibleSlots(agentMascots.list.length);
+    const count = this.cornerMode ? slots.shown + (slots.more > 0 ? 1 : 0) : 0;
+    if (count !== this.cornerMiniCount) {
+      this.cornerMiniCount = count;
+      void Bridge.setCornerMinis(count);
+    }
+    if (this.cornerLayout) {
+      this.minis.render(this.cornerMode ? agentMascots.list : [], this.cornerLayout);
+    }
+    this.scheduleMiniWake(agentMascots.nextChangeAt(), now);
+  }
+
+  private scheduleMiniWake(next: number | null, now: number) {
+    if (next === this.miniWakeAt) return;
+    if (this.miniWakeTimer != null) window.clearTimeout(this.miniWakeTimer);
+    this.miniWakeTimer = null;
+    this.miniWakeAt = next;
+    if (next == null) return;
+    this.miniWakeTimer = window.setTimeout(() => {
+      this.miniWakeTimer = null;
+      this.miniWakeAt = null;
+      this.ensureRunning();
+    }, Math.max(0, next - now));
+  }
 
   private updateBotTargets() {
     let p = botPosition(State.mode, State.view, this.height.value, State.uploadProgress);
