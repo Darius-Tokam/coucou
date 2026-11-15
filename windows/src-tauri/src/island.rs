@@ -103,6 +103,7 @@ pub const MINI_GAP: f64 = 8.0;
 const CORNER_MARGIN: f64 = 16.0;
 pub(crate) static CORNER_MINIS: Mutex<Vec<MiniSlot>> = Mutex::new(Vec::new());
 pub(crate) static CORNER_MINI_DRAG: AtomicBool = AtomicBool::new(false);
+pub(crate) static CORNER_PANEL_ANCHOR: Mutex<Option<IslandRect>> = Mutex::new(None);
 static CORNER_MASCOT_OFFSET: Mutex<(f64, f64)> = Mutex::new((0.0, 0.0));
 static CORNER_HELD_RECTS: Mutex<Vec<IslandRect>> = Mutex::new(Vec::new());
 
@@ -149,7 +150,7 @@ pub fn dragged_mascot_at(window_at: (f64, f64)) -> (f64, f64) {
 
 /// The window for the mascot at `mascot_at` (physical top-left; None, or off
 /// the work area: the bottom-right corner), and the panel of logical size
-/// `panel` beside it toward the centre of `work` (physical), kept on screen.
+/// `panel`, optionally anchored to a mini's physical screen rectangle.
 pub fn corner_layout(
     work: IslandRect,
     scale: f64,
@@ -158,6 +159,7 @@ pub fn corner_layout(
     minis: &[MiniSlot],
     dragging: bool,
     mascot_size: f64,
+    panel_anchor: Option<IslandRect>,
 ) -> CornerLayout {
     let size = mascot_size * scale;
     let margin = CORNER_MARGIN * scale;
@@ -173,7 +175,7 @@ pub fn corner_layout(
     let left = mx + size / 2.0 >= work.x + work.w / 2.0;
     let up = my + size / 2.0 >= work.y + work.h / 2.0;
 
-    if minis.is_empty() && !dragging {
+    if minis.is_empty() && !dragging && panel_anchor.is_none() {
         let Some((pw, ph)) = panel else {
             return CornerLayout {
                 window: mascot,
@@ -322,25 +324,45 @@ pub fn corner_layout(
         let fits = |y: f64| y >= work.y && y + ph <= bottom;
         let preferred = if up { above } else { below };
         let alternate = if up { below } else { above };
-        if fits(preferred) || fits(alternate) {
+        let mut placed = if fits(preferred) || fits(alternate) {
             let py = if fits(preferred) { preferred } else { alternate };
-            return IslandRect { x: px, y: py, w: pw, h: ph };
-        }
-
-        let before = block.x - gap - pw;
-        let after = block.x + block.w + gap;
-        let fits_x = |x: f64| x >= work.x && x + pw <= right;
-        let side = if left { before } else { after };
-        let other_side = if left { after } else { before };
-        let px = if fits_x(side) {
-            side
-        } else if fits_x(other_side) {
-            other_side
+            IslandRect { x: px, y: py, w: pw, h: ph }
         } else {
-            px
+            let before = block.x - gap - pw;
+            let after = block.x + block.w + gap;
+            let fits_x = |x: f64| x >= work.x && x + pw <= right;
+            let side = if left { before } else { after };
+            let other_side = if left { after } else { before };
+            let px = if fits_x(side) {
+                side
+            } else if fits_x(other_side) {
+                other_side
+            } else {
+                px
+            };
+            let py = if up { mascot.y + mascot.h - ph } else { mascot.y };
+            IslandRect { x: px, y: py.min(bottom - ph).max(work.y), w: pw, h: ph }
         };
-        let py = if up { mascot.y + mascot.h - ph } else { mascot.y };
-        IslandRect { x: px, y: py.min(bottom - ph).max(work.y), w: pw, h: ph }
+
+        let Some(anchor) = panel_anchor else { return placed };
+        placed.x = (anchor.x + anchor.w / 2.0 - pw / 2.0).min(right - pw).max(work.x);
+        let queued_anchor = queued.iter().any(|&index| {
+            let mini = mini_rects[index];
+            (mini.x - anchor.x).abs() < 0.5
+                && (mini.y - anchor.y).abs() < 0.5
+                && (mini.w - anchor.w).abs() < 0.5
+                && (mini.h - anchor.h).abs() < 0.5
+        });
+        if !queued_anchor {
+            placed.y = if anchor.y + anchor.h / 2.0 >= work.y + work.h / 2.0 {
+                anchor.y - gap - ph
+            } else {
+                anchor.y + anchor.h + gap
+            }
+            .min(bottom - ph)
+            .max(work.y);
+        }
+        placed
     });
 
     let mut drawn = Vec::with_capacity(minis.len() + 2);
@@ -888,6 +910,7 @@ fn apply_corner(win: &WebviewWindow, m: &Monitor, corner_pos: Option<(f64, f64)>
         &minis,
         CORNER_MINI_DRAG.load(Ordering::Relaxed),
         mascot_size,
+        *CORNER_PANEL_ANCHOR.lock().unwrap(),
     );
     remember_mascot_offset(&layout, scale);
     let mut held_rects: Vec<IslandRect> = layout.panel.into_iter().collect();

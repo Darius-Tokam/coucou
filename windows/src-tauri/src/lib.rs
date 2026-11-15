@@ -323,6 +323,19 @@ fn corner_mini_drag(app: AppHandle, shared: State<Shared>, on: bool) {
     island::apply_geometry(&app, &pref, collapsed.then_some(size));
 }
 
+#[tauri::command]
+fn corner_panel_anchor(
+    app: AppHandle,
+    shared: State<Shared>,
+    anchor: Option<island::IslandRect>,
+) {
+    *island::CORNER_PANEL_ANCHOR.lock().unwrap() = anchor;
+    let pref = shared.settings.lock().unwrap().screen.clone();
+    let collapsed = shared.gate.collapsed.load(Ordering::Relaxed);
+    let size = *shared.gate.collapsed_size.lock().unwrap();
+    island::apply_geometry(&app, &pref, collapsed.then_some(size));
+}
+
 /// The panel is laid out in CSS px against the window's own scale. If the webview
 /// reports a different devicePixelRatio (it ends up bigger than the window and gets
 /// cut), correct its zoom so one CSS px is one logical px again.
@@ -1043,6 +1056,7 @@ pub fn run() {
             reposition,
             set_corner_minis,
             corner_mini_drag,
+            corner_panel_anchor,
             fit_zoom,
             hub_shown,
             list_monitors,
