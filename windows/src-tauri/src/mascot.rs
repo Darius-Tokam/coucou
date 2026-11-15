@@ -610,6 +610,33 @@ mod tests {
     }
 
     #[test]
+    fn a_3d_export_names_its_tint_material() {
+        let dir = scratch("tint-3d");
+        write(
+            &dir.join("manifest.json"),
+            r#"{"version":2,"name":"orbi","engine":"3d","engine_src":"engines/wobnimo.js",
+               "engine_spec":{"materials":{"shell":{},"lilac":{}}},
+               "default_state":"idle","alpha":"none","states":{"idle":{"loop":true}}}"#,
+        );
+        write(&dir.join("mascot.js"), "// component");
+        write(&dir.join("engines/wobnimo.js"), "// engine");
+
+        let info = read_export(&dir, Slot::Claude).unwrap();
+
+        assert_eq!(info.tint_material.as_deref(), Some("shell"));
+    }
+
+    #[test]
+    fn a_blob_export_has_no_tint_material() {
+        let dir = scratch("tint-blob");
+        blob_export(&dir);
+
+        let info = read_export(&dir, Slot::Claude).unwrap();
+
+        assert_eq!(info.tint_material, None);
+    }
+
+    #[test]
     fn a_video_export_without_engine_is_video() {
         let dir = scratch("video");
         write(
@@ -798,6 +825,14 @@ mod tests {
         let page = String::from_utf8(respond(&root, "/__coucou_frame.html?mini=1", None).body).unwrap();
         assert!(page.contains(r#"data.type === "pause""#));
         assert!(page.contains(r#"searchParams.get("mini")"#));
+    }
+
+    #[test]
+    fn the_frame_page_applies_a_look() {
+        let root = scratch("frame-look");
+        let page = String::from_utf8(respond(&root, "/__coucou_frame.html", None).body).unwrap();
+        assert!(page.contains(r#"data.type === "look""#));
+        assert!(page.contains(r#""palette""#));
     }
 
     #[test]

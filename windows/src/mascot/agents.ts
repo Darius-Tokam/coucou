@@ -8,6 +8,18 @@ export const LEAVE_MS = 3000;
 export const FINISHED_MS = 3000;
 export const SLEEP_MS = 120_000;
 export const STALE_MS = 1_800_000;
+const MAX_STEPS = 50;
+
+export const MINI_COLORS: readonly string[] = [
+  "#60A5FA",
+  "#34D399",
+  "#FBBF24",
+  "#F472B6",
+  "#A78BFA",
+  "#22D3EE",
+  "#FB7185",
+  "#A3E635",
+];
 
 export function familyOf(coucouAgent: string | undefined): MascotFamily | null {
   if (coucouAgent == null || coucouAgent === "" || coucouAgent === "claude-desktop") return "claude";
@@ -25,6 +37,8 @@ export interface AgentEvent {
   project: string;
   tool: string | null;
   message: string;
+  step: string | null;
+  finalText: string | null;
 }
 
 export function agentEventFrom(
@@ -36,9 +50,11 @@ export function agentEventFrom(
     coucou_agent?: string;
     tool_name?: string;
     message?: string;
+    last_assistant_message?: string;
   },
   pillId: string,
   project: string,
+  step: string | null,
 ): AgentEvent | null {
   const family = familyOf(p.coucou_agent);
   if (!family || !p.session_id) return null;
@@ -52,6 +68,8 @@ export function agentEventFrom(
     project,
     tool: p.tool_name ?? null,
     message: p.message ?? "",
+    step,
+    finalText: p.last_assistant_message ?? null,
   };
 }
 
@@ -62,6 +80,11 @@ export interface AgentMascot {
   label: string;
   subagent: boolean;
   state: BotStateName;
+  type: string | null;
+  project: string;
+  steps: readonly string[];
+  finalText: string | null;
+  parentKey: string | null;
 }
 
 interface TrackedMascot extends AgentMascot {
@@ -154,6 +177,11 @@ export class AgentMascots {
         label: subagent ? (e.agentType ?? e.project) : e.project,
         subagent,
         state: state ?? "idle",
+        type: subagent ? e.agentType : null,
+        project: e.project,
+        steps: [],
+        finalText: null,
+        parentKey: subagent ? `${e.family}:${e.sessionId}` : null,
         lastEventAt: now,
         transitionAt: null,
         removeAt: null,
@@ -161,6 +189,15 @@ export class AgentMascots {
         sleepAt: null,
       };
       this.entries.push(mascot);
+      changed = true;
+    }
+
+    if (subagent && e.step != null) {
+      mascot.steps = [...mascot.steps, e.step].slice(-MAX_STEPS);
+      changed = true;
+    }
+    if (subagent && e.finalText != null && mascot.finalText !== e.finalText) {
+      mascot.finalText = e.finalText;
       changed = true;
     }
 
@@ -267,6 +304,35 @@ export function exportFor(
   codex: MascotInfo | null,
 ): MascotInfo | null {
   return family === "codex" ? (codex ?? claude) : claude;
+}
+
+function hashName(name: string): number {
+  let hash = 0x811c9dc5;
+  for (const byte of new TextEncoder().encode(name)) {
+    hash ^= byte;
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash;
+}
+
+export function colorForType(
+  type: string,
+  overrides: Readonly<Record<string, { color?: string | null }>>,
+): string {
+  return overrides[type]?.color ?? MINI_COLORS[hashName(type) % MINI_COLORS.length];
+}
+
+export function positionKey(mascot: AgentMascot): string {
+  return mascot.subagent
+    ? `${mascot.family}:type:${mascot.type ?? ""}`
+    : `${mascot.family}:project:${mascot.project}`;
+}
+
+export type MiniDisplay = "all" | "sessions" | "none";
+
+export function displayed(list: readonly AgentMascot[], mode: MiniDisplay): readonly AgentMascot[] {
+  if (mode === "none") return [];
+  return mode === "sessions" ? list.filter((mascot) => !mascot.subagent) : list;
 }
 
 export const agentMascots = new AgentMascots();

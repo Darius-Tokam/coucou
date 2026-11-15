@@ -392,7 +392,8 @@ function handleHook(island: Island, payload: HookPayload) {
   const validAgent = validateAgent(payload.coucou_agent);
   const workspaceId = payload.term_editor === "cursor" ? CURSOR_ID : CLAUDE_ID;
   const agentId = validAgent ? `agent_${validAgent}` : workspaceId;
-  const agentEvent = agentEventFrom(payload, agentId, projectName);
+  const step = name === "PreToolUse" ? stepLabel(payload.tool_name ?? "Tool", payload.tool_input ?? {}) : null;
+  const agentEvent = agentEventFrom(payload, agentId, projectName, step);
   if (agentEvent && agentMascots.apply(agentEvent, performance.now())) State.notify();
   const isExternalAgent = validAgent !== null;
   const sessionId = payload.session_id ?? "";

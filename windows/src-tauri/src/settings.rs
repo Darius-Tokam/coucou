@@ -513,7 +513,12 @@ mod tests {
   "closedIsland": "music",
   "agyApprovalsEnabled": true,
   "islandAnchor": "top",
-  "cornerPos": { "x": 100.0, "y": 200.0 }
+  "cornerPos": { "x": 100.0, "y": 200.0 },
+  "miniSize": 96.0,
+  "miniDisplay": "sessions",
+  "subagentLooks": { "Explore": { "color": "#60A5FA", "accessory": "cap", "eyes": "round", "cheeks": "rose" } },
+  "knownSubagentTypes": ["Explore"],
+  "miniPositions": { "claude:type:Explore": { "x": 300.0, "y": 400.0 } }
 }"##;
 
     fn custom() -> Value {
@@ -593,6 +598,32 @@ mod tests {
     fn unknown_fields_are_ignored_and_the_known_ones_kept() {
         let bytes = custom_with("somethingFromALaterVersion", Some(json!({ "a": [1, 2] })));
         assert_eq!(shown(&parse(&bytes).unwrap()), custom());
+    }
+
+    #[test]
+    fn customisable_mascot_settings_have_safe_defaults() {
+        let settings = Settings::default();
+        assert_eq!(settings.mini_size, 120.0);
+        assert_eq!(settings.mini_display, "all");
+        assert!(settings.subagent_looks.is_empty());
+        assert!(settings.known_subagent_types.is_empty());
+        assert!(settings.mini_positions.is_empty());
+    }
+
+    #[test]
+    fn a_file_from_before_customisable_mascots_uses_the_defaults() {
+        let mut old = custom().as_object().unwrap().clone();
+        for key in ["miniSize", "miniDisplay", "subagentLooks", "knownSubagentTypes", "miniPositions"] {
+            old.remove(key);
+        }
+        let loaded = parse(&serde_json::to_vec(&old).unwrap()).unwrap();
+
+        assert_eq!(loaded.mini_size, 120.0);
+        assert_eq!(loaded.mini_display, "all");
+        assert!(loaded.subagent_looks.is_empty());
+        assert!(loaded.known_subagent_types.is_empty());
+        assert!(loaded.mini_positions.is_empty());
+        assert_eq!(loaded.model, "some-model");
     }
 
     #[test]
@@ -1039,6 +1070,11 @@ mod tests {
                 "agyApprovalsEnabled",
                 "islandAnchor",
                 "cornerPos",
+                "miniSize",
+                "miniDisplay",
+                "subagentLooks",
+                "knownSubagentTypes",
+                "miniPositions",
             ]
         );
         let _ = std::fs::remove_dir_all(&dir);
