@@ -128,6 +128,25 @@ pub struct Settings {
     /// last dropped it; None for the bottom-right corner. Owned by Rust
     /// (lib.rs saves it when the window is dragged), like `desktop_mochi`.
     pub corner_pos: Option<CornerPos>,
+    /// Logical side of a session mini; subagents use three quarters of it.
+    pub mini_size: f64,
+    /// Which agent minis the corner shows: "all", "sessions" or "none".
+    pub mini_display: String,
+    /// A chosen appearance for each known subagent type.
+    pub subagent_looks: BTreeMap<String, SubagentLook>,
+    /// Subagent types seen so far, including ones without a chosen look.
+    pub known_subagent_types: Vec<String>,
+    /// Saved physical screen positions, keyed by type or project.
+    pub mini_positions: BTreeMap<String, CornerPos>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SubagentLook {
+    pub color: Option<String>,
+    pub accessory: Option<String>,
+    pub eyes: Option<String>,
+    pub cheeks: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -209,6 +228,11 @@ impl Default for Settings {
             // Corner mode is Windows only (island.rs corner_mode).
             island_anchor: if cfg!(windows) { "corner" } else { "top" }.into(),
             corner_pos: None,
+            mini_size: 120.0,
+            mini_display: "all".into(),
+            subagent_looks: BTreeMap::new(),
+            known_subagent_types: Vec::new(),
+            mini_positions: BTreeMap::new(),
         }
     }
 }

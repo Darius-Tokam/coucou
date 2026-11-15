@@ -1493,7 +1493,7 @@ export class Island {
     const count = this.cornerMode ? slots.shown + (slots.more > 0 ? 1 : 0) : 0;
     if (count !== this.cornerMiniCount) {
       this.cornerMiniCount = count;
-      void Bridge.setCornerMinis(count);
+      void Bridge.setCornerMinis(Array.from({ length: count }, () => ({ size: 120, at: null })));
     }
     if (this.cornerLayout) {
       this.minis.render(this.cornerMode ? agentMascots.list : [], this.cornerLayout);

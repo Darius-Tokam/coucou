@@ -87,6 +87,74 @@ test("pause is sent once per change and replayed when the mascot is ready", () =
   }
 });
 
+test("setLook sends once per change", () => {
+  const dom = hostDom();
+  try {
+    const messages = [];
+    const host = new MascotHost(dom.root);
+    host.load({ name: "Test", baseUrl: "mascot://localhost/claude/" });
+    const frame = dom.root.children[0];
+    frame.contentWindow = { postMessage: (message) => messages.push(message) };
+    const listener = [...dom.listeners][0];
+    listener({
+      source: frame.contentWindow,
+      origin: new URL("mascot://localhost/claude/").origin,
+      data: { type: "ready" },
+    });
+    const blue = {
+      color: "#60A5FA",
+      material: "shell",
+      accessory: null,
+      eyes: null,
+      cheeks: null,
+    };
+
+    host.setLook(blue);
+    host.setLook({ ...blue });
+    host.setLook({ ...blue, color: "#34D399" });
+
+    assert.deepEqual(messages, [
+      { type: "look", ...blue },
+      { type: "look", ...blue, color: "#34D399" },
+    ]);
+    host.dispose();
+  } finally {
+    dom.restore();
+  }
+});
+
+test("setLook is replayed when ready", () => {
+  const dom = hostDom();
+  try {
+    const messages = [];
+    const host = new MascotHost(dom.root);
+    host.load({ name: "Test", baseUrl: "mascot://localhost/claude/" });
+    const frame = dom.root.children[0];
+    frame.contentWindow = { postMessage: (message) => messages.push(message) };
+    const look = {
+      color: "#F472B6",
+      material: "lilac",
+      accessory: "cap",
+      eyes: "round",
+      cheeks: "rose",
+    };
+
+    host.setLook(look);
+    assert.deepEqual(messages, []);
+
+    const listener = [...dom.listeners][0];
+    listener({
+      source: frame.contentWindow,
+      origin: new URL("mascot://localhost/claude/").origin,
+      data: { type: "ready" },
+    });
+    assert.deepEqual(messages, [{ type: "look", ...look }]);
+    host.dispose();
+  } finally {
+    dom.restore();
+  }
+});
+
 test("only a mini mascot frame asks for reduced resolution", () => {
   const dom = hostDom();
   try {

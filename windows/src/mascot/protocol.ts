@@ -9,6 +9,15 @@ export type HostMessage =
   | { type: "state"; state: string; immediate: boolean }
   /** Stops the export after its current frame while it sleeps. */
   | { type: "pause"; paused: boolean }
+  /** Applies the chosen subagent appearance to the active engine. */
+  | {
+    type: "look";
+    color: string | null;
+    material: string | null;
+    accessory: string | null;
+    eyes: string | null;
+    cheeks: string | null;
+  }
   /** The cursor, in the iframe's coordinates: the engine looks at it. */
   | { type: "pointer"; x: number; y: number }
   /** A click on the mascot: the engine's own reaction (3D: a hop). */

@@ -104,6 +104,24 @@ mascot-avatar { display: block; width: 100%; height: 100%; }
   function activeVideo() {
     return avatar && avatar.shadowRoot ? avatar.shadowRoot.querySelector("video.active") : null;
   }
+  function setOrRemove(element, name, value) {
+    if (value == null) element.removeAttribute(name);
+    else element.setAttribute(name, String(value));
+  }
+  function applyLook(data) {
+    var wobnimo = engine("wobnimo-mascot");
+    if (wobnimo) {
+      if (data.color == null || data.material == null) wobnimo.removeAttribute("palette");
+      else wobnimo.setAttribute("palette", String(data.material) + ":" + String(data.color));
+    }
+    var blob = engine("agent-mascot");
+    if (blob) {
+      setOrRemove(blob, "color", data.color);
+      setOrRemove(blob, "accessory", data.accessory);
+      setOrRemove(blob, "eyes", data.eyes);
+      setOrRemove(blob, "cheeks", data.cheeks);
+    }
+  }
   function resumeVideo(video) {
     var request = video.play();
     if (request && typeof request.catch === "function") request.catch(function () {});
@@ -179,6 +197,8 @@ mascot-avatar { display: block; width: 100%; height: 100%; }
     } else if (data.type === "pause") {
       paused = !!data.paused;
       syncPaused();
+    } else if (data.type === "look") {
+      applyLook(data);
     } else if (data.type === "pointer") {
       // The island is the one that sees the mouse: it is replayed here, where
       // the engine listens for it (and looks at the cursor).
@@ -327,6 +347,8 @@ pub struct MascotInfo {
     pub alpha: String,
     pub states: Vec<String>,
     pub default_state: String,
+    /// First material a 3D export offers for palette tinting.
+    pub tint_material: Option<String>,
     pub manifest_path: String,
     pub script_path: String,
     /// The `mascot` protocol's root: manifest.json and mascot.js are served under it.
@@ -406,16 +428,29 @@ pub fn read_export(dir: &Path, slot: Slot) -> Result<MascotInfo, ImportError> {
     }
 
     let text_of = |key: &str| manifest.get(key).and_then(|v| v.as_str()).map(str::to_string);
+    let engine = text_of("engine").unwrap_or_else(|| "video".into());
+    let tint_material = (engine == "3d")
+        .then(|| {
+            manifest
+                .get("engine_spec")?
+                .get("materials")?
+                .as_object()?
+                .keys()
+                .next()
+                .cloned()
+        })
+        .flatten();
     let default_state = text_of("default_state")
         .or_else(|| states.first().cloned())
         .unwrap_or_else(|| "idle".into());
     Ok(MascotInfo {
         name: text_of("name").unwrap_or_else(|| "MascotForge".into()),
-        engine: text_of("engine").unwrap_or_else(|| "video".into()),
+        engine,
         credit: text_of("credit"),
         alpha: text_of("alpha").unwrap_or_else(|| "none".into()),
         states,
         default_state,
+        tint_material,
         manifest_path: manifest_path.to_string_lossy().into_owned(),
         script_path: script.to_string_lossy().into_owned(),
         base_url: format!("{BASE_URL}{}/", slot.name()),

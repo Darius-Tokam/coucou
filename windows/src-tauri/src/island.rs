@@ -5,11 +5,11 @@
 // centre of the main display inside a borderless, transparent, always-on-top
 // window that never takes focus.
 
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, Monitor, PhysicalPosition, PhysicalSize, WebviewWindow};
 
 use crate::platform::{self, cursor_physical, left_button_down};
@@ -101,8 +101,15 @@ pub const MINI_SIZE: f64 = 120.0;
 pub const MINI_GAP: f64 = 8.0;
 /// Gap between the mascot and the edges of the work area, logical px.
 const CORNER_MARGIN: f64 = 16.0;
-pub(crate) static CORNER_MINIS: AtomicUsize = AtomicUsize::new(0);
+pub(crate) static CORNER_MINIS: Mutex<Vec<MiniSlot>> = Mutex::new(Vec::new());
+pub(crate) static CORNER_MINI_DRAG: AtomicBool = AtomicBool::new(false);
 static CORNER_MASCOT_OFFSET: Mutex<(f64, f64)> = Mutex::new((0.0, 0.0));
+
+#[derive(Deserialize, Clone, Copy, Debug, PartialEq)]
+pub struct MiniSlot {
+    pub size: f64,
+    pub at: Option<(f64, f64)>,
+}
 
 /// Corner mode: where the window goes and what sits where inside it.
 /// `window` is in physical screen px; the other rectangles are window-logical px.
@@ -113,6 +120,7 @@ pub struct CornerLayout {
     pub mascot: IslandRect,
     pub panel: Option<IslandRect>,
     pub minis: Vec<IslandRect>,
+    pub scale: f64,
 }
 
 fn physical_mascot_offset(layout: &CornerLayout, scale: f64) -> (f64, f64) {
@@ -139,7 +147,8 @@ pub fn corner_layout(
     scale: f64,
     mascot_at: Option<(f64, f64)>,
     panel: Option<(f64, f64)>,
-    minis: usize,
+    minis: &[MiniSlot],
+    dragging: bool,
 ) -> CornerLayout {
     let size = MASCOT_SIZE * scale;
     let margin = CORNER_MARGIN * scale;
@@ -155,13 +164,14 @@ pub fn corner_layout(
     let left = mx + size / 2.0 >= work.x + work.w / 2.0;
     let up = my + size / 2.0 >= work.y + work.h / 2.0;
 
-    if minis == 0 {
+    if minis.is_empty() && !dragging {
         let Some((pw, ph)) = panel else {
             return CornerLayout {
                 window: mascot,
                 mascot: IslandRect { x: 0.0, y: 0.0, w: MASCOT_SIZE, h: MASCOT_SIZE },
                 panel: None,
                 minis: Vec::new(),
+                scale,
             };
         };
         let (pw, ph) = (pw * scale, ph * scale);
@@ -185,61 +195,88 @@ pub fn corner_layout(
             mascot: inside(mascot),
             panel: Some(inside(panel)),
             minis: Vec::new(),
+            scale,
         };
     }
 
-    let mini_size = MINI_SIZE * scale;
     let gap = MINI_GAP * scale;
-    let step = mini_size + gap;
-    let capacity = |room: f64| (((room.max(0.0) + gap) / step).floor() as usize);
-    let preferred_room = if left { mx - work.x } else { right - (mx + size) };
-    let opposite_room = if left { right - (mx + size) } else { mx - work.x };
-    let preferred_capacity = capacity(preferred_room);
-    let total_capacity = (preferred_capacity + capacity(opposite_room)).max(1);
-    let max_rows = capacity(work.h).max(1);
-    let needed_per_row = minis.div_ceil(max_rows);
-    let per_row = preferred_capacity.max(needed_per_row).min(total_capacity).max(1);
-    let rows = minis.div_ceil(per_row);
-    let first_y = if up { my + size - mini_size } else { my };
-    let raw_top = if up { first_y - (rows - 1) as f64 * step } else { first_y };
-    let raw_bottom = if up { first_y + mini_size } else { first_y + (rows - 1) as f64 * step + mini_size };
-    let y_shift = if raw_top < work.y {
-        work.y - raw_top
-    } else if raw_bottom > bottom {
-        bottom - raw_bottom
-    } else {
-        0.0
-    };
-    let mut mini_rects = Vec::with_capacity(minis);
-    for i in 0..minis {
-        let row = (i / per_row) as f64;
-        let column = i % per_row;
-        let x = if column < preferred_capacity {
-            let column = column as f64;
-            if left {
-                mx - gap - mini_size - column * step
-            } else {
-                mx + size + gap + column * step
-            }
+    let mut mini_rects = vec![IslandRect::default(); minis.len()];
+    let queued: Vec<usize> = minis
+        .iter()
+        .enumerate()
+        .filter_map(|(index, mini)| mini.at.is_none().then_some(index))
+        .collect();
+    if !queued.is_empty() {
+        let cell_size = queued
+            .iter()
+            .map(|&index| minis[index].size * scale)
+            .fold(0.0, f64::max);
+        let step = cell_size + gap;
+        let capacity = |room: f64| ((room.max(0.0) + gap) / step).floor() as usize;
+        let preferred_room = if left { mx - work.x } else { right - (mx + size) };
+        let opposite_room = if left { right - (mx + size) } else { mx - work.x };
+        let preferred_capacity = capacity(preferred_room);
+        let total_capacity = (preferred_capacity + capacity(opposite_room)).max(1);
+        let max_rows = capacity(work.h).max(1);
+        let needed_per_row = queued.len().div_ceil(max_rows);
+        let per_row = preferred_capacity.max(needed_per_row).min(total_capacity).max(1);
+        let rows = queued.len().div_ceil(per_row);
+        let first_y = if up { my + size - cell_size } else { my };
+        let raw_top = if up { first_y - (rows - 1) as f64 * step } else { first_y };
+        let raw_bottom = if up {
+            first_y + cell_size
         } else {
-            let column = (column - preferred_capacity) as f64;
-            if left {
-                mx + size + gap + column * step
-            } else {
-                mx - gap - mini_size - column * step
-            }
+            first_y + (rows - 1) as f64 * step + cell_size
         };
-        let y = if up {
-            first_y - row * step + y_shift
+        let y_shift = if raw_top < work.y {
+            work.y - raw_top
+        } else if raw_bottom > bottom {
+            bottom - raw_bottom
         } else {
-            first_y + row * step + y_shift
+            0.0
         };
-        mini_rects.push(IslandRect { x, y, w: mini_size, h: mini_size });
+        for (queue_index, &index) in queued.iter().enumerate() {
+            let mini_size = minis[index].size * scale;
+            let row = (queue_index / per_row) as f64;
+            let column = queue_index % per_row;
+            let x = if column < preferred_capacity {
+                let column = column as f64;
+                if left {
+                    mx - gap - mini_size - column * step
+                } else {
+                    mx + size + gap + column * step
+                }
+            } else {
+                let column = (column - preferred_capacity) as f64;
+                if left {
+                    mx + size + gap + column * step
+                } else {
+                    mx - gap - mini_size - column * step
+                }
+            };
+            let row_y = if up {
+                first_y - row * step + y_shift
+            } else {
+                first_y + row * step + y_shift
+            };
+            let y = if up { row_y + cell_size - mini_size } else { row_y };
+            mini_rects[index] = IslandRect { x, y, w: mini_size, h: mini_size };
+        }
+    }
+    for (index, mini) in minis.iter().enumerate() {
+        let Some((x, y)) = mini.at else { continue };
+        let mini_size = mini.size * scale;
+        mini_rects[index] = IslandRect {
+            x: x.min(right - mini_size).max(work.x),
+            y: y.min(bottom - mini_size).max(work.y),
+            w: mini_size,
+            h: mini_size,
+        };
     }
 
-    let mut block_rects = Vec::with_capacity(minis + 1);
+    let mut block_rects = Vec::with_capacity(queued.len() + 1);
     block_rects.push(mascot);
-    block_rects.extend(mini_rects.iter().copied());
+    block_rects.extend(queued.iter().map(|&index| mini_rects[index]));
     let block = bounding(&block_rects);
     let panel = panel.map(|(pw, ph)| {
         let (pw, ph) = (pw * scale, ph * scale);
@@ -271,11 +308,13 @@ pub fn corner_layout(
         IslandRect { x: px, y: py.min(bottom - ph).max(work.y), w: pw, h: ph }
     });
 
-    let mut drawn = block_rects;
+    let mut drawn = Vec::with_capacity(minis.len() + 2);
+    drawn.push(mascot);
+    drawn.extend(mini_rects.iter().copied());
     if let Some(panel) = panel {
         drawn.push(panel);
     }
-    let window = bounding(&drawn);
+    let window = if dragging { work } else { bounding(&drawn) };
     let inside = |r: IslandRect| IslandRect {
         x: (r.x - window.x) / scale,
         y: (r.y - window.y) / scale,
@@ -287,6 +326,7 @@ pub fn corner_layout(
         mascot: inside(mascot),
         panel: panel.map(|rect| inside(rect)),
         minis: mini_rects.into_iter().map(|rect| inside(rect)).collect(),
+        scale,
     }
 }
 
@@ -784,12 +824,14 @@ fn apply_corner(win: &WebviewWindow, m: &Monitor, corner_pos: Option<(f64, f64)>
         .find(|other| work_of(other) == work)
         .map(|other| other.scale_factor())
         .unwrap_or_else(|| m.scale_factor());
+    let minis = CORNER_MINIS.lock().unwrap().clone();
     let layout = corner_layout(
         work,
         scale,
         corner_pos,
         open.then_some((PANEL_W, PANEL_H)),
-        CORNER_MINIS.load(Ordering::Relaxed),
+        &minis,
+        CORNER_MINI_DRAG.load(Ordering::Relaxed),
     );
     remember_mascot_offset(&layout, scale);
     let w = layout.window;

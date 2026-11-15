@@ -13,6 +13,7 @@ import type { Bindings } from "./shortcuts";
 import { DEFAULT_OUTFIT, type Outfit } from "../mochi/wardrobe";
 import { pillColor } from "./pill-colors";
 import { Spotify, musicPlaying } from "./spotify";
+import type { MiniDisplay } from "../mascot/agents";
 
 export type AgentSource = "claudeCode" | "n8n" | "agent";
 export type PillBadge = "approval" | "finished" | "error";
@@ -97,6 +98,13 @@ export interface IntegrationInfo {
   configured: boolean;
 }
 
+export interface SubagentLook {
+  color: string | null;
+  accessory: string | null;
+  eyes: string | null;
+  cheeks: string | null;
+}
+
 export interface Settings {
   soundEnabled: boolean;
   soundVolume: number;
@@ -113,6 +121,11 @@ export interface Settings {
   islandAnchor: "top" | "corner";
   /** Corner mode: the mascot's top-left in physical screen px; Rust saves it. */
   cornerPos: { x: number; y: number } | null;
+  miniSize: number;
+  miniDisplay: MiniDisplay;
+  subagentLooks: Record<string, SubagentLook>;
+  knownSubagentTypes: string[];
+  miniPositions: Record<string, { x: number; y: number }>;
   absenceInterval: number;
   /** Declared pills next to the main one (at most 4), in the order they were added. */
   activeIntegrations: string[];
@@ -188,6 +201,11 @@ export const DEFAULT_SETTINGS: Settings = {
   closedIsland: "mochi",
   islandAnchor: "corner",
   cornerPos: null,
+  miniSize: 120,
+  miniDisplay: "all",
+  subagentLooks: {},
+  knownSubagentTypes: [],
+  miniPositions: {},
   absenceInterval: 180,
   activeIntegrations: [
     "integration_resend", "integration_n8n", "integration_vercel", "integration_github",

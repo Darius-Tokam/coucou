@@ -293,8 +293,17 @@ fn reposition(app: AppHandle, shared: State<Shared>) {
 }
 
 #[tauri::command]
-fn set_corner_minis(app: AppHandle, shared: State<Shared>, count: usize) {
-    island::CORNER_MINIS.store(count, Ordering::Relaxed);
+fn set_corner_minis(app: AppHandle, shared: State<Shared>, slots: Vec<island::MiniSlot>) {
+    *island::CORNER_MINIS.lock().unwrap() = slots;
+    let pref = shared.settings.lock().unwrap().screen.clone();
+    let collapsed = shared.gate.collapsed.load(Ordering::Relaxed);
+    let size = *shared.gate.collapsed_size.lock().unwrap();
+    island::apply_geometry(&app, &pref, collapsed.then_some(size));
+}
+
+#[tauri::command]
+fn corner_mini_drag(app: AppHandle, shared: State<Shared>, on: bool) {
+    island::CORNER_MINI_DRAG.store(on, Ordering::Relaxed);
     let pref = shared.settings.lock().unwrap().screen.clone();
     let collapsed = shared.gate.collapsed.load(Ordering::Relaxed);
     let size = *shared.gate.collapsed_size.lock().unwrap();
@@ -1020,6 +1029,7 @@ pub fn run() {
             focus_window,
             reposition,
             set_corner_minis,
+            corner_mini_drag,
             fit_zoom,
             hub_shown,
             list_monitors,
