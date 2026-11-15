@@ -1095,6 +1095,8 @@ pub fn set_ignore_cursor(app: &AppHandle, ignore: bool) {
 mod corner_tests {
     use super::*;
 
+    static MINI_DRAG_TEST: Mutex<()> = Mutex::new(());
+
     #[test]
     fn a_folded_mascot_watches_a_nearby_cursor_closely() {
         // A 200 x 200 window: its centre is (100, 100).
@@ -1463,5 +1465,65 @@ mod corner_tests {
         assert!(hits(&rects, 800.0, 200.0), "on the mascot");
         assert!(hits(&rects, 300.0, 100.0), "on the panel");
         assert!(!hits(&[], 10.0, 10.0), "nothing drawn yet");
+    }
+
+    #[test]
+    fn replacing_minis_ends_a_drag() {
+        let _guard = MINI_DRAG_TEST.lock().unwrap();
+        CORNER_MINI_DRAG.store(true, Ordering::Relaxed);
+
+        replace_corner_minis(Vec::new(), false);
+
+        assert!(!CORNER_MINI_DRAG.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn replacing_minis_preserves_a_reported_drag() {
+        let _guard = MINI_DRAG_TEST.lock().unwrap();
+        CORNER_MINI_DRAG.store(true, Ordering::Relaxed);
+
+        replace_corner_minis(Vec::new(), true);
+
+        assert!(CORNER_MINI_DRAG.load(Ordering::Relaxed));
+        CORNER_MINI_DRAG.store(false, Ordering::Relaxed);
+    }
+
+    #[test]
+    fn a_dragged_mini_keeps_the_mouse() {
+        assert!(active_pointer_takes_mouse(&[], &[], 900.0, 500.0, true, true));
+    }
+
+    #[test]
+    fn two_placed_minis_at_the_left_edge_stay_distinct() {
+        let layout = corner_layout(
+            WORK,
+            1.0,
+            None,
+            None,
+            &[
+                MiniSlot { size: 120.0, at: Some((0.0, 200.0)) },
+                MiniSlot { size: 120.0, at: Some((-60.0, 200.0)) },
+            ],
+            false,
+            240.0,
+        );
+        let first = on_screen(layout.window, layout.minis[0]);
+        let second = on_screen(layout.window, layout.minis[1]);
+
+        assert_ne!(first, second);
+        assert!(inside(WORK, first));
+        assert!(inside(WORK, second));
+    }
+
+    #[test]
+    fn a_held_file_outside_the_panel_and_queue_passes_through() {
+        let held = [
+            rect(0.0, 0.0, 720.0, 320.0),
+            rect(900.0, 400.0, 500.0, 240.0),
+        ];
+
+        assert!(active_pointer_takes_mouse(&[], &held, 200.0, 100.0, true, false));
+        assert!(active_pointer_takes_mouse(&[], &held, 1000.0, 500.0, true, false));
+        assert!(!active_pointer_takes_mouse(&[], &held, 800.0, 700.0, true, false));
     }
 }

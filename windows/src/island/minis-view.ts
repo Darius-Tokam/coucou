@@ -7,6 +7,7 @@ import { MascotHost } from "../mascot/host";
 import { mascotStateFor, playsImmediately, shouldPause } from "../mascot/states";
 import { DRAG_THRESHOLD } from "../mochi/desktop-logic";
 import { DOUBLE_CLICK_MS } from "./corner";
+import { miniDragCancellation, type MiniDragCancelReason } from "./mini-drag";
 import { MochiCanvas } from "./mochi-canvas";
 
 export interface MiniHandlers {
@@ -41,9 +42,11 @@ class MiniMascotView {
   private dragging = false;
   private dragAt = { x: 0, y: 0 };
   private clickTimer: number | null = null;
+  private readonly handlers: MiniHandlers;
 
   constructor(root: HTMLElement, mascot: AgentMascot, handlers: MiniHandlers) {
     this.mascot = mascot;
+    this.handlers = handlers;
     this.box = document.createElement("div");
     this.box.className = "mini-box";
     this.visual = document.createElement("div");
@@ -112,9 +115,9 @@ class MiniMascotView {
     });
     this.layer.addEventListener("pointerup", (event) => {
       if (!this.press || this.press.pointerId !== event.pointerId) return;
-      this.layer.releasePointerCapture(event.pointerId);
       if (!this.dragging || !this.layout) {
         this.press = null;
+        this.layer.releasePointerCapture(event.pointerId);
         return;
       }
       this.rememberPointer(event.clientX, event.clientY);
@@ -124,20 +127,22 @@ class MiniMascotView {
         y: this.layout.window.y + this.dragAt.y * this.layout.scale,
       };
       this.press = null;
+      this.layer.releasePointerCapture(event.pointerId);
       void handlers.dragEnd(this.mascot, at).finally(() => {
         this.dragging = false;
         this.pointerScreen = null;
         this.box.classList.remove("dragging");
       });
     });
-    this.layer.addEventListener("pointercancel", (event) => {
+    const cancelPointer = (reason: MiniDragCancelReason, event: PointerEvent) => {
       if (!this.press || this.press.pointerId !== event.pointerId) return;
-      this.press = null;
-      if (!this.dragging) return;
-      this.dragging = false;
-      this.pointerScreen = null;
-      this.box.classList.remove("dragging");
-      handlers.dragCancel();
+      this.cancelDrag(reason);
+    };
+    this.layer.addEventListener("pointercancel", (event) => {
+      cancelPointer("pointercancel", event);
+    });
+    this.layer.addEventListener("lostpointercapture", (event) => {
+      cancelPointer("lostpointercapture", event);
     });
 
     this.box.append(this.visual, label, this.layer);
@@ -198,6 +203,7 @@ class MiniMascotView {
 
   remove(): void {
     if (this.clickTimer != null) window.clearTimeout(this.clickTimer);
+    this.cancelDrag("remove");
     this.host.dispose();
     this.mochi.setShown(false);
     this.box.remove();
@@ -232,6 +238,15 @@ class MiniMascotView {
 
   private refresh(): void {
     this.mochi.setShown(!this.info || this.failed);
+  }
+
+  private cancelDrag(reason: MiniDragCancelReason): void {
+    const cancellation = miniDragCancellation(this.dragging, reason);
+    this.press = null;
+    this.dragging = cancellation.active;
+    this.pointerScreen = null;
+    this.box.classList.remove("dragging");
+    if (cancellation.notify) this.handlers.dragCancel();
   }
 
   private rememberPointer(x: number, y: number): void {

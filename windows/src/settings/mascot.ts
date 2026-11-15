@@ -1,12 +1,13 @@
 // Settings mascot controls: island placement and one MascotForge export per agent family.
 
 import { Bridge, onEvent, type MascotChanged, type MascotInfo, type MascotSlot } from "../core/bridge";
-import type { Settings, SubagentLook } from "../core/state";
+import type { Settings } from "../core/state";
 import { t } from "../i18n/i18n";
 import { colorForType } from "../mascot/agents";
 import { MASCOT_SIZE, clampMascotSize } from "../island/corner";
 import { h } from "../views/dom";
 import { importErrorText } from "./mascot-errors";
+import { subagentLookFor } from "./mascot-looks";
 
 const ACCESSORIES = ["none", "beret", "glasses", "sunglasses"] as const;
 const EYES = ["dot", "capsule"] as const;
@@ -37,6 +38,7 @@ function lookFieldLabel(field: "accessory" | "eyes" | "cheeks"): string {
 export function mascotSection(
   settings: () => Settings,
   save: () => void | Promise<void>,
+  registerRefresh?: (redraw: () => void) => void,
 ): HTMLElement {
   const infos: Partial<Record<MascotSlot, MascotInfo | null>> = {};
   const blobControls = new Set<HTMLSelectElement>();
@@ -205,15 +207,7 @@ export function mascotSection(
     void persist();
   });
 
-  const lookFor = (type: string): SubagentLook => {
-    settings().subagentLooks ??= {};
-    return settings().subagentLooks[type] ??= {
-      color: null,
-      accessory: null,
-      eyes: null,
-      cheeks: null,
-    };
-  };
+  const lookFor = (type: string) => subagentLookFor(settings(), type);
 
   const lookSelect = (
     type: string,
@@ -246,7 +240,6 @@ export function mascotSection(
     blobControls.clear();
     looks.replaceChildren();
     for (const type of settings().knownSubagentTypes ?? []) {
-      const look = lookFor(type);
       const color = h("input", {
         type: "color",
         value: colorForType(type, settings().subagentLooks),
@@ -254,7 +247,7 @@ export function mascotSection(
       }) as HTMLInputElement;
       color.value = colorForType(type, settings().subagentLooks);
       color.addEventListener("change", () => {
-        look.color = color.value;
+        lookFor(type).color = color.value;
         void persist();
       });
       looks.append(h(
@@ -269,6 +262,7 @@ export function mascotSection(
     }
     refreshBlobControls();
   };
+  registerRefresh?.(redrawLooks);
   redrawLooks();
 
   const addType = h("input", {

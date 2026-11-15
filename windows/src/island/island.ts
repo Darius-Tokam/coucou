@@ -144,6 +144,7 @@ export class Island {
   minis!: MinisView;
   private appliedMascotSize = MASCOT_SIZE;
   private cornerMinisKey = "";
+  private miniDragging = false;
   private miniWakeTimer: number | null = null;
   private miniWakeAt: number | null = null;
   private pushedRects = "";
@@ -449,17 +450,24 @@ export class Island {
     this.minis = new MinisView(this.root, {
       open: (mascot) => this.openMini(mascot),
       more: () => this.clickMascot(),
-      dragStart: () => void Bridge.cornerMiniDrag(true),
+      dragStart: () => {
+        this.miniDragging = true;
+        void Bridge.cornerMiniDrag(true);
+      },
       dragEnd: async (mascot, at) => {
         State.settings.miniPositions[positionKey(mascot)] = at;
         State.notify();
         try {
           await Bridge.saveSettings(State.settings);
         } finally {
+          this.miniDragging = false;
           await Bridge.cornerMiniDrag(false);
         }
       },
-      dragCancel: () => void Bridge.cornerMiniDrag(false),
+      dragCancel: () => {
+        this.miniDragging = false;
+        void Bridge.cornerMiniDrag(false);
+      },
       reset: async (mascot) => {
         delete State.settings.miniPositions[positionKey(mascot)];
         State.notify();
@@ -1073,8 +1081,10 @@ export class Island {
       this.expand(State.defaultView());
       return;
     }
-    State.subagentKey = key;
+    // Opening goes through the default view (fsm "home" → expand), which
+    // closes any subagent card: the key is set only once that has happened.
     this.fsm.forceHome();
+    State.subagentKey = key;
     this.expand("subagent");
   }
 
@@ -1563,7 +1573,7 @@ export class Island {
     const key = JSON.stringify(slots);
     if (key !== this.cornerMinisKey) {
       this.cornerMinisKey = key;
-      void Bridge.setCornerMinis(slots);
+      void Bridge.setCornerMinis(slots, this.miniDragging);
     }
     if (layout) {
       this.minis.render(this.cornerMode ? visible : [], layout);

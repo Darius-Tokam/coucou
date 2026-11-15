@@ -61,6 +61,61 @@ test("the settings offer a big mascot size", () => {
   assert.match(section.textContent, /Size of the big mascot/);
 });
 
+test("a second color change updates the replaced settings object", () => {
+  let settings = {
+    islandAnchor: "corner",
+    mascotSize: 240,
+    miniSize: 120,
+    miniDisplay: "all",
+    subagentLooks: {
+      Explore: { color: null, accessory: null, eyes: null, cheeks: null },
+    },
+    knownSubagentTypes: ["Explore"],
+    miniPositions: {},
+  };
+  const section = mascotSection(() => settings, () => {});
+  const color = section.find("INPUT").find((input) => input.getAttribute("type") === "color");
+  assert.ok(color);
+
+  color.value = "#123456";
+  color.fire("change");
+  const oldSettings = settings;
+  settings = {
+    ...settings,
+    subagentLooks: {
+      Explore: { ...settings.subagentLooks.Explore },
+    },
+  };
+  color.value = "#654321";
+  color.fire("change");
+
+  assert.equal(settings.subagentLooks.Explore.color, "#654321");
+  assert.equal(oldSettings.subagentLooks.Explore.color, "#123456");
+});
+
+test("new subagent types appear while settings stay open", () => {
+  let settings = {
+    islandAnchor: "corner",
+    mascotSize: 240,
+    miniSize: 120,
+    miniDisplay: "all",
+    subagentLooks: {},
+    knownSubagentTypes: ["Explore"],
+    miniPositions: {},
+  };
+  let refresh = () => {};
+  const section = mascotSection(
+    () => settings,
+    () => {},
+    (redraw) => { refresh = redraw; },
+  );
+
+  settings = { ...settings, knownSubagentTypes: ["Explore", "Review"] };
+  refresh();
+
+  assert.match(section.textContent, /Review/);
+});
+
 test("a folder that isn't an export says so", () => {
   assert.equal(importErrorText("not_an_export"), "This folder doesn't hold a MascotForge export.");
 });

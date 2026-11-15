@@ -294,7 +294,8 @@ export const Bridge = {
   /** Give the window keyboard focus (chat field) and take it away again. */
   focusWindow: (focused: boolean) => call<void>("focus_window", { focused }),
 
-  setCornerMinis: (slots: MiniSlot[]) => call<void>("set_corner_minis", { slots }),
+  setCornerMinis: (slots: MiniSlot[], dragging: boolean) =>
+    call<void>("set_corner_minis", { slots, dragging }),
   cornerMiniDrag: (on: boolean) => call<void>("corner_mini_drag", { on }),
   reposition: () => call<void>("reposition"),
   fitZoom: (dpr: number) => call<boolean>("fit_zoom", { dpr }),

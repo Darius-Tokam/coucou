@@ -1273,7 +1273,10 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{diff_file, is_forge_instance_url};
+    use std::cell::Cell;
+    use std::sync::atomic::Ordering;
+
+    use super::{diff_file, finish_corner_drag, is_forge_instance_url, CORNER_DRAG};
 
     #[test]
     fn forge_links_stay_on_the_configured_instance() {
@@ -1308,5 +1311,16 @@ mod tests {
         assert!(diff_file("").is_none());
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_settled_corner_drag_reapplies_geometry() {
+        let applied = Cell::new(false);
+        CORNER_DRAG.store(true, Ordering::Relaxed);
+
+        finish_corner_drag(|| applied.set(true));
+
+        assert!(!CORNER_DRAG.load(Ordering::Relaxed));
+        assert!(applied.get());
     }
 }

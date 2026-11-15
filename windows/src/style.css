@@ -195,6 +195,7 @@ body {
 
 #island {
   position: absolute;
+  z-index: 9;
   top: 0;
   left: 50%;
   background: #000;
