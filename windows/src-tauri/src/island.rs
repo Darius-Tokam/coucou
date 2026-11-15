@@ -980,6 +980,15 @@ mod corner_tests {
         rect(window.x + item.x, window.y + item.y, item.w, item.h)
     }
 
+    fn on_screen_at_scale(window: IslandRect, item: IslandRect, scale: f64) -> IslandRect {
+        rect(
+            window.x + item.x * scale,
+            window.y + item.y * scale,
+            item.w * scale,
+            item.h * scale,
+        )
+    }
+
     fn inside(outer: IslandRect, inner: IslandRect) -> bool {
         inner.x >= outer.x
             && inner.y >= outer.y
@@ -1109,6 +1118,66 @@ mod corner_tests {
         assert!(inside(work, on_screen(layout.window, layout.panel.unwrap())));
         for &mini in &layout.minis {
             assert!(inside(work, on_screen(layout.window, mini)));
+        }
+    }
+
+    #[test]
+    fn dragging_a_group_keeps_the_mascot_in_place() {
+        let scale = 1.5;
+        let work = rect(0.0, 0.0, 2880.0, 1560.0);
+        let before = corner_layout(work, scale, None, None, 3);
+        remember_mascot_offset(&before, scale);
+        let saved = dragged_mascot_at((before.window.x, before.window.y));
+        let after = corner_layout(work, scale, Some(saved), None, 3);
+
+        assert_eq!(
+            on_screen_at_scale(before.window, before.mascot, scale),
+            on_screen_at_scale(after.window, after.mascot, scale),
+        );
+    }
+
+    #[test]
+    fn folded_pointer_only_wakes_on_the_large_mascot() {
+        let rects = [rect(300.0, 0.0, 240.0, 240.0), rect(0.0, 120.0, 120.0, 120.0)];
+
+        assert_eq!(
+            folded_pointer(&rects, 60.0, 180.0),
+            FoldedPointer { takes_mouse: true, wakes: false },
+        );
+        assert_eq!(
+            folded_pointer(&rects, 200.0, 180.0),
+            FoldedPointer { takes_mouse: false, wakes: false },
+        );
+        assert_eq!(
+            folded_pointer(&rects, 420.0, 120.0),
+            FoldedPointer { takes_mouse: true, wakes: true },
+        );
+    }
+
+    #[test]
+    fn nine_minis_fit_when_the_mascot_is_near_the_horizontal_centre() {
+        let work = rect(0.0, 0.0, 1280.0, 728.0);
+        let scale = 1.5;
+        let layout = corner_layout(work, scale, Some((460.0, 344.0)), None, 9);
+
+        assert!(inside(work, layout.window));
+        assert!(inside(work, on_screen_at_scale(layout.window, layout.mascot, scale)));
+        for &mini in &layout.minis {
+            assert!(inside(work, on_screen_at_scale(layout.window, mini, scale)));
+        }
+    }
+
+    #[test]
+    fn a_middle_panel_falls_beside_the_mascot() {
+        let work = rect(0.0, 0.0, 1366.0, 728.0);
+        let layout = corner_layout(work, 1.0, Some((1110.0, 260.0)), Some((720.0, 320.0)), 1);
+        let mascot = on_screen(layout.window, layout.mascot);
+        let panel = on_screen(layout.window, layout.panel.unwrap());
+
+        assert!(inside(work, panel));
+        assert!(!overlaps(panel, mascot));
+        for &mini in &layout.minis {
+            assert!(!overlaps(panel, on_screen(layout.window, mini)));
         }
     }
 

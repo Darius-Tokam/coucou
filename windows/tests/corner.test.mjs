@@ -86,6 +86,18 @@ test("a waiting approval is never clicked out of sight", async () => {
   assert.equal(mascotClickAction({ open: true, pinned: true, approvalWaits: true }), "none");
 });
 
+test("a mini keeps a waiting approval visible and focused", async () => {
+  const { miniClickAction } = await import("../src/island/corner.ts");
+  assert.deepEqual(
+    miniClickAction({ approvalWaits: true, defaultView: "approval" }),
+    { changeFocus: false, view: "approval" },
+  );
+  assert.deepEqual(
+    miniClickAction({ approvalWaits: false, defaultView: "approval" }),
+    { changeFocus: true, view: "overview" },
+  );
+});
+
 test("the second click of a double click leaves the card open", async () => {
   const { mascotClickAction } = await import("../src/island/corner.ts");
   assert.equal(mascotClickAction({ open: true, pinned: true, approvalWaits: false, sinceOpenMs: 200 }), "none");

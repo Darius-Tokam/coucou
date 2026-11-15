@@ -101,3 +101,77 @@ test("nextChangeAt points at the next departure", () => {
   mascots.apply(event("SubagentStop", { agent_id: "a1", agent_type: "Explore" }), 2000);
   assert.equal(mascots.nextChangeAt(), 5000);
 });
+
+test("active states go idle before sleeping after silence", () => {
+  for (const [name, extra] of [
+    ["UserPromptSubmit", {}],
+    ["PreToolUse", { tool_name: "Read" }],
+    ["StopFailure", {}],
+  ]) {
+    mascots.clear();
+    mascots.apply(event(name, extra), 1000);
+    mascots.tick(121000);
+    assert.equal(mascots.list[0].state, "idle", name);
+    mascots.tick(240999);
+    assert.equal(mascots.list[0].state, "idle", name);
+    mascots.tick(241000);
+    assert.equal(mascots.list[0].state, "sleeping", name);
+  }
+});
+
+test("approval and question stay awake while silent", () => {
+  mascots.apply(event("PermissionRequest"), 1000);
+  mascots.apply(event("PreToolUse", { agent_id: "a1", agent_type: "Explore", tool_name: "ask_question" }), 1000);
+  mascots.tick(241000);
+  assert.equal(mascots.list[0].state, "approval");
+  assert.equal(mascots.list[1].state, "question");
+});
+
+test("interrupt and stop failure match the tab states", () => {
+  mascots.apply(event("PreToolUse", { tool_name: "Read" }), 1000);
+  mascots.apply(event("Interrupt"), 1001);
+  assert.equal(mascots.list[0].state, "idle");
+  mascots.apply(event("StopFailure"), 1002);
+  assert.equal(mascots.list[0].state, "error");
+});
+
+test("notifications match rate limits and questions", () => {
+  mascots.apply(event("Notification", { message: "Rate limit reached" }), 1000);
+  assert.equal(mascots.list[0].state, "ratelimit");
+  mascots.apply(event("Notification", { message: "Continue?" }), 1001);
+  assert.equal(mascots.list[0].state, "question");
+});
+
+test("an event without a state keeps a finished transition", () => {
+  mascots.apply(event("SessionStart"), 1000);
+  mascots.apply(event("Stop"), 2000);
+  mascots.apply(event("UnknownEvent"), 3000);
+  mascots.tick(5000);
+  assert.equal(mascots.list[0].state, "idle");
+});
+
+test("an event without a state keeps a scheduled departure", () => {
+  const agent = { agent_id: "a1", agent_type: "Explore" };
+  mascots.apply(event("SubagentStart", agent), 1000);
+  mascots.apply(event("SubagentStop", agent), 2000);
+  mascots.apply(event("UnknownEvent", agent), 3000);
+  mascots.tick(5000);
+  assert.equal(mascots.list.length, 0);
+});
+
+test("session end also removes its subagents", () => {
+  mascots.apply(event("SessionStart"), 1000);
+  mascots.apply(event("SubagentStart", { agent_id: "a1", agent_type: "Explore" }), 1001);
+  mascots.apply(event("SubagentStart", { agent_id: "a2", agent_type: "Plan" }), 1002);
+  mascots.apply(agentEventFrom({
+    hook_event_name: "SubagentStart",
+    session_id: "s2",
+    agent_id: "b1",
+    agent_type: "Explore",
+  }, "integration_claude", "Other"), 1003);
+
+  mascots.apply(event("SessionEnd"), 2000);
+  mascots.tick(5000);
+
+  assert.deepEqual(mascots.list.map((mascot) => mascot.key), ["claude:s2:b1"]);
+});

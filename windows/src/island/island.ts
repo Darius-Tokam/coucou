@@ -34,7 +34,8 @@ import { refreshHookPills } from "./integrations";
 import { restoreAlertFocus } from "./hooks";
 import { DesktopLink } from "./desktop";
 import {
-  CORNER_HOVER_CLOSE_S, CORNER_SUPPORTED, HoverStart, MASCOT_SIZE, cornerRects, mascotClickAction, placeInPanel,
+  CORNER_HOVER_CLOSE_S, CORNER_SUPPORTED, HoverStart, MASCOT_SIZE, cornerRects, mascotClickAction,
+  miniClickAction, placeInPanel,
 } from "./corner";
 import { CornerView } from "./corner-view";
 import { cornerAgentState } from "../mascot/states";
@@ -1018,12 +1019,16 @@ export class Island {
     Sound.resume();
     const now = performance.now();
     State.lastActivity = now;
-    State.setFocus(pillId);
+    const action = miniClickAction({
+      approvalWaits: State.pendingApproval != null,
+      defaultView: State.defaultView(),
+    });
+    if (action.changeFocus) State.setFocus(pillId);
     this.cornerOpenedAt = now;
     this.fsm.pinned = true;
     State.isPinned = true;
     this.fsm.forceHome();
-    this.expand("overview");
+    this.expand(action.view);
   }
 
   /** Island rect in window coordinates (origin top-left of the 720×320 window). */

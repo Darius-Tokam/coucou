@@ -12,17 +12,18 @@ export class MascotHost {
   private ready = false;
   /** The last state asked for, replayed once the mascot is ready. */
   private wanted: { state: string; immediate: boolean } | null = null;
+  private readonly messageListener = (event: MessageEvent<FrameMessage>) => {
+    if (!this.frame || event.source !== this.frame.contentWindow || event.origin !== this.origin) return;
+    if (event.data.type === "ready") {
+      this.ready = true;
+      if (this.wanted) this.send({ type: "state", ...this.wanted });
+    } else if (event.data.type === "error") {
+      this.onError?.(event.data.message);
+    }
+  };
 
   constructor(private readonly container: HTMLElement) {
-    window.addEventListener("message", (event: MessageEvent<FrameMessage>) => {
-      if (!this.frame || event.source !== this.frame.contentWindow || event.origin !== this.origin) return;
-      if (event.data.type === "ready") {
-        this.ready = true;
-        if (this.wanted) this.send({ type: "state", ...this.wanted });
-      } else if (event.data.type === "error") {
-        this.onError?.(event.data.message);
-      }
-    });
+    window.addEventListener("message", this.messageListener);
   }
 
   /** True while a MascotForge mascot is shown (Mochi otherwise). */
@@ -66,6 +67,12 @@ export class MascotHost {
   /** A click on the mascot. */
   poke(): void {
     if (this.ready) this.send({ type: "poke" });
+  }
+
+  dispose(): void {
+    window.removeEventListener("message", this.messageListener);
+    this.load(null);
+    this.onError = null;
   }
 
   private send(message: HostMessage): void {

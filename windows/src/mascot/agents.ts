@@ -24,6 +24,7 @@ export interface AgentEvent {
   agentType: string | null;
   project: string;
   tool: string | null;
+  message: string;
 }
 
 export function agentEventFrom(
@@ -34,6 +35,7 @@ export function agentEventFrom(
     agent_type?: string;
     coucou_agent?: string;
     tool_name?: string;
+    message?: string;
   },
   pillId: string,
   project: string,
@@ -49,6 +51,7 @@ export function agentEventFrom(
     agentType: p.agent_type ?? null,
     project,
     tool: p.tool_name ?? null,
+    message: p.message ?? "",
   };
 }
 
@@ -65,6 +68,8 @@ interface TrackedMascot extends AgentMascot {
   lastEventAt: number;
   transitionAt: number | null;
   removeAt: number | null;
+  idleAt: number | null;
+  sleepAt: number | null;
 }
 
 const DEPARTURES = new Set(["SubagentStop", "SessionEnd"]);
@@ -83,6 +88,15 @@ function stateFor(e: AgentEvent): BotStateName | null {
       return "working";
     case "PermissionRequest":
       return "approval";
+    case "Interrupt":
+      return "idle";
+    case "StopFailure":
+      return "error";
+    case "Notification": {
+      const lower = e.message.toLowerCase();
+      if (lower.includes("rate limit") || lower.includes("limite d")) return "ratelimit";
+      return e.message.endsWith("?") ? "question" : null;
+    }
     case "Stop":
     case "SubagentStop":
     case "SessionEnd":
@@ -103,9 +117,26 @@ export class AgentMascots {
       ? `${e.family}:${e.sessionId}:${e.agentId}`
       : `${e.family}:${e.sessionId}`;
     let mascot = this.entries.find((item) => item.key === key);
-    if (!mascot && DEPARTURES.has(e.name)) return false;
 
     let changed = false;
+    if (e.name === "SessionEnd") {
+      const prefix = `${e.family}:${e.sessionId}:`;
+      for (const child of this.entries) {
+        if (!child.key.startsWith(prefix)) continue;
+        child.lastEventAt = now;
+        child.transitionAt = null;
+        child.removeAt = now + LEAVE_MS;
+        child.idleAt = null;
+        child.sleepAt = null;
+        if (child.state !== "finished") {
+          child.state = "finished";
+          changed = true;
+        }
+      }
+    }
+    if (!mascot && DEPARTURES.has(e.name)) return changed;
+
+    const state = stateFor(e);
     if (!mascot) {
       mascot = {
         key,
@@ -113,25 +144,39 @@ export class AgentMascots {
         pillId: e.pillId,
         label: subagent ? (e.agentType ?? e.project) : e.project,
         subagent,
-        state: stateFor(e) ?? "idle",
+        state: state ?? "idle",
         lastEventAt: now,
         transitionAt: null,
         removeAt: null,
+        idleAt: null,
+        sleepAt: null,
       };
       this.entries.push(mascot);
       changed = true;
     }
 
     mascot.lastEventAt = now;
-    mascot.transitionAt = null;
-    mascot.removeAt = null;
-    const state = stateFor(e);
-    if (state && mascot.state !== state) {
-      mascot.state = state;
-      changed = true;
+    if (state) {
+      mascot.transitionAt = null;
+      mascot.removeAt = null;
+      if (mascot.state !== state) {
+        mascot.state = state;
+        changed = true;
+      }
+      this.scheduleSilence(mascot, now);
+    } else if (mascot.transitionAt == null && mascot.removeAt == null) {
+      this.scheduleSilence(mascot, now);
     }
-    if (e.name === "Stop") mascot.transitionAt = now + FINISHED_MS;
-    if (DEPARTURES.has(e.name)) mascot.removeAt = now + LEAVE_MS;
+    if (e.name === "Stop") {
+      mascot.transitionAt = now + FINISHED_MS;
+      mascot.idleAt = null;
+      mascot.sleepAt = mascot.transitionAt + SLEEP_MS;
+    }
+    if (DEPARTURES.has(e.name)) {
+      mascot.removeAt = now + LEAVE_MS;
+      mascot.idleAt = null;
+      mascot.sleepAt = null;
+    }
     return changed;
   }
 
@@ -151,7 +196,15 @@ export class AgentMascots {
           changed = true;
         }
       }
-      if (mascot.state === "idle" && now >= mascot.lastEventAt + SLEEP_MS) {
+      if (mascot.idleAt != null && now >= mascot.idleAt) {
+        mascot.idleAt = null;
+        if (mascot.state !== "idle") {
+          mascot.state = "idle";
+          changed = true;
+        }
+      }
+      if (mascot.sleepAt != null && mascot.state === "idle" && now >= mascot.sleepAt) {
+        mascot.sleepAt = null;
         mascot.state = "sleeping";
         changed = true;
       }
@@ -170,7 +223,8 @@ export class AgentMascots {
     };
     for (const mascot of this.entries) {
       take(mascot.lastEventAt + STALE_MS);
-      if (mascot.state === "idle") take(mascot.lastEventAt + SLEEP_MS);
+      if (mascot.idleAt != null) take(mascot.idleAt);
+      if (mascot.sleepAt != null) take(mascot.sleepAt);
       if (mascot.transitionAt != null) take(mascot.transitionAt);
       if (mascot.removeAt != null) take(mascot.removeAt);
     }
@@ -179,6 +233,17 @@ export class AgentMascots {
 
   clear(): void {
     this.entries.length = 0;
+  }
+
+  private scheduleSilence(mascot: TrackedMascot, now: number): void {
+    mascot.idleAt = null;
+    mascot.sleepAt = null;
+    if (mascot.state === "approval" || mascot.state === "question" || mascot.state === "sleeping") return;
+    if (mascot.state === "idle") mascot.sleepAt = now + SLEEP_MS;
+    else {
+      mascot.idleAt = now + SLEEP_MS;
+      mascot.sleepAt = now + SLEEP_MS * 2;
+    }
   }
 }
 

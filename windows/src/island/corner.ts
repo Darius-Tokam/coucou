@@ -5,6 +5,7 @@
 // the card sits in that area.
 
 import type { CornerLayout, Rect } from "../core/bridge";
+import type { IslandViewName } from "../core/layout";
 
 /** Corner mode exists on Windows only: gtk-layer-shell keeps the Linux island at the top. */
 export const CORNER_SUPPORTED =
@@ -33,6 +34,15 @@ export function mascotClickAction(s: {
   if (!s.pinned) return "pin";
   if (s.approvalWaits || (s.sinceOpenMs ?? Infinity) < DOUBLE_CLICK_MS) return "none";
   return "close";
+}
+
+export function miniClickAction(s: {
+  approvalWaits: boolean;
+  defaultView: IslandViewName;
+}): { changeFocus: boolean; view: IslandViewName } {
+  return s.approvalWaits
+    ? { changeFocus: false, view: s.defaultView }
+    : { changeFocus: true, view: "overview" };
 }
 
 /** The cursor (window-logical) in the mascot's own coordinates, and whether it is on it. */

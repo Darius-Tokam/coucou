@@ -101,7 +101,7 @@ class MiniMascotView {
   }
 
   remove(): void {
-    this.host.load(null);
+    this.host.dispose();
     this.mochi.setShown(false);
     this.box.remove();
   }
