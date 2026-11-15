@@ -2,7 +2,7 @@ import { Bridge, type CornerLayout, type MascotInfo, type Rect } from "../core/b
 import { State } from "../core/state";
 import { exportFor, visibleSlots, type AgentMascot } from "../mascot/agents";
 import { MascotHost } from "../mascot/host";
-import { mascotStateFor, playsImmediately } from "../mascot/states";
+import { mascotStateFor, playsImmediately, shouldPause } from "../mascot/states";
 import { MochiCanvas } from "./mochi-canvas";
 
 export interface MiniHandlers {
@@ -25,6 +25,8 @@ class MiniMascotView {
   private failed = false;
   private playedState = "";
   private playedMascotState = "";
+  private label: string | null = null;
+  private color: string | null = null;
 
   constructor(root: HTMLElement, mascot: AgentMascot, handlers: MiniHandlers) {
     this.mascot = mascot;
@@ -33,7 +35,7 @@ class MiniMascotView {
     this.visual = document.createElement("div");
     this.visual.className = "mini-visual";
     this.mochi = new MochiCanvas(this.visual);
-    this.host = new MascotHost(this.visual);
+    this.host = new MascotHost(this.visual, { mini: true });
     this.host.onError = (message) => {
       void Bridge.log(`mini mascot failed to load, Mochi stands in: ${message}`);
       this.failed = true;
@@ -67,9 +69,15 @@ class MiniMascotView {
 
   update(mascot: AgentMascot, info: MascotInfo | null, rect: Rect | null, color: string): void {
     this.mascot = mascot;
-    this.text.textContent = mascot.label;
-    this.dot.style.background = color;
-    this.layer.setAttribute("aria-label", mascot.label);
+    if (mascot.label !== this.label) {
+      this.label = mascot.label;
+      this.text.textContent = mascot.label;
+      this.layer.setAttribute("aria-label", mascot.label);
+    }
+    if (color !== this.color) {
+      this.color = color;
+      this.dot.style.background = color;
+    }
     this.rect = rect;
     this.box.style.display = rect ? "block" : "none";
     if (rect) {
@@ -125,6 +133,7 @@ class MiniMascotView {
       this.playedState = state;
       this.playedMascotState = this.mascot.state;
       this.host.play(state, immediate || (changed && playsImmediately(this.mascot.state)));
+      this.host.setPaused(shouldPause(this.mascot.state, this.hovered));
     } else {
       if (this.playedMascotState === this.mascot.state) return;
       this.playedMascotState = this.mascot.state;

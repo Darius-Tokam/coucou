@@ -10,7 +10,7 @@ const compiled = ts.transpileModule(source, {
 }).outputText;
 const { MascotHost } = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString("base64")}`);
 
-test("disposing a mascot host removes its listener and iframe", () => {
+function hostDom() {
   const dom = installFakeDom();
   const root = dom.root();
   root.appendChild = (node) => root.append(node);
@@ -24,20 +24,82 @@ test("disposing a mascot host removes its listener and iframe", () => {
       if (type === "message") listeners.delete(listener);
     },
   };
+  return {
+    listeners,
+    root,
+    restore() {
+      if (previousWindow === undefined) delete globalThis.window;
+      else globalThis.window = previousWindow;
+    },
+  };
+}
+
+test("disposing a mascot host removes its listener and iframe", () => {
+  const dom = hostDom();
 
   try {
-    const host = new MascotHost(root);
+    const host = new MascotHost(dom.root);
     host.load({ name: "Test", baseUrl: "mascot://localhost/claude/" });
-    assert.equal(listeners.size, 1);
-    assert.equal(root.children.length, 1);
+    assert.equal(dom.listeners.size, 1);
+    assert.equal(dom.root.children.length, 1);
 
     host.dispose();
 
-    assert.equal(listeners.size, 0);
-    assert.equal(root.children.length, 0);
+    assert.equal(dom.listeners.size, 0);
+    assert.equal(dom.root.children.length, 0);
     assert.equal(host.active, false);
   } finally {
-    if (previousWindow === undefined) delete globalThis.window;
-    else globalThis.window = previousWindow;
+    dom.restore();
+  }
+});
+
+test("pause is sent once per change and replayed when the mascot is ready", () => {
+  const dom = hostDom();
+  try {
+    const messages = [];
+    const host = new MascotHost(dom.root);
+    host.load({ name: "Test", baseUrl: "mascot://localhost/claude/" });
+    const frame = dom.root.children[0];
+    frame.contentWindow = { postMessage: (message) => messages.push(message) };
+
+    host.setPaused(true);
+    host.setPaused(true);
+    assert.deepEqual(messages, []);
+
+    const listener = [...dom.listeners][0];
+    listener({
+      source: frame.contentWindow,
+      origin: new URL("mascot://localhost/claude/").origin,
+      data: { type: "ready" },
+    });
+    assert.deepEqual(messages, [{ type: "pause", paused: true }]);
+
+    host.setPaused(true);
+    host.setPaused(false);
+    host.setPaused(false);
+    assert.deepEqual(messages, [
+      { type: "pause", paused: true },
+      { type: "pause", paused: false },
+    ]);
+    host.dispose();
+  } finally {
+    dom.restore();
+  }
+});
+
+test("only a mini mascot frame asks for reduced resolution", () => {
+  const dom = hostDom();
+  try {
+    const large = new MascotHost(dom.root);
+    large.load({ name: "Large", baseUrl: "mascot://localhost/claude/" });
+    assert.equal(new URL(dom.root.children[0].src).searchParams.has("mini"), false);
+    large.dispose();
+
+    const mini = new MascotHost(dom.root, { mini: true });
+    mini.load({ name: "Mini", baseUrl: "mascot://localhost/codex/" });
+    assert.equal(new URL(dom.root.children[0].src).searchParams.get("mini"), "1");
+    mini.dispose();
+  } finally {
+    dom.restore();
   }
 });

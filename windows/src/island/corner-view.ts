@@ -6,7 +6,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Bridge, type CornerLayout, type MascotInfo } from "../core/bridge";
 import type { BotStateName } from "../core/layout";
 import { MascotHost } from "../mascot/host";
-import { mascotStateFor, playsImmediately } from "../mascot/states";
+import { mascotStateFor, playsImmediately, shouldPause } from "../mascot/states";
 import { DRAG_THRESHOLD } from "../mochi/desktop-logic";
 import { mascotPointer } from "./corner";
 import { MochiCanvas } from "./mochi-canvas";
@@ -118,6 +118,7 @@ export class CornerView {
     if (this.info && !this.failed) {
       const name = mascotStateFor(this.state, this.hovered, this.info.states, this.info.defaultState);
       this.host.play(name, now || playsImmediately(this.state));
+      this.host.setPaused(shouldPause(this.state, this.hovered));
     } else {
       this.mochi.setState(this.state);
     }

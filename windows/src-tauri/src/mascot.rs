@@ -698,6 +698,14 @@ mod tests {
     }
 
     #[test]
+    fn the_frame_page_handles_pause_and_mini_mode() {
+        let root = scratch("frame-pause");
+        let page = String::from_utf8(respond(&root, "/__coucou_frame.html?mini=1", None).body).unwrap();
+        assert!(page.contains(r#"data.type === "pause""#));
+        assert!(page.contains(r#"searchParams.get("mini")"#));
+    }
+
+    #[test]
     fn the_frame_page_lets_the_mascot_see_the_cursor_and_the_clicks() {
         let root = scratch("frame-input");
         let page = String::from_utf8(respond(&root, "/__coucou_frame.html", None).body).unwrap();

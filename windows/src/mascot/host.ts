@@ -4,6 +4,10 @@
 import type { MascotInfo } from "../core/bridge";
 import type { FrameMessage, HostMessage } from "./protocol";
 
+export interface MascotHostOptions {
+  mini?: boolean;
+}
+
 export class MascotHost {
   onError: ((message: string) => void) | null = null;
 
@@ -12,17 +16,22 @@ export class MascotHost {
   private ready = false;
   /** The last state asked for, replayed once the mascot is ready. */
   private wanted: { state: string; immediate: boolean } | null = null;
+  /** The last pause asked for, replayed once the mascot is ready. */
+  private paused: boolean | null = null;
+  private readonly mini: boolean;
   private readonly messageListener = (event: MessageEvent<FrameMessage>) => {
     if (!this.frame || event.source !== this.frame.contentWindow || event.origin !== this.origin) return;
     if (event.data.type === "ready") {
       this.ready = true;
       if (this.wanted) this.send({ type: "state", ...this.wanted });
+      if (this.paused !== null) this.send({ type: "pause", paused: this.paused });
     } else if (event.data.type === "error") {
       this.onError?.(event.data.message);
     }
   };
 
-  constructor(private readonly container: HTMLElement) {
+  constructor(private readonly container: HTMLElement, options: MascotHostOptions = {}) {
+    this.mini = options.mini === true;
     window.addEventListener("message", this.messageListener);
   }
 
@@ -48,7 +57,8 @@ export class MascotHost {
     frame.style.cssText =
       "position:absolute;inset:0;width:100%;height:100%;border:0;background:transparent;pointer-events:none;";
     // Its own origin: the export's scripts can't reach this window or Tauri.
-    frame.src = `${info.baseUrl}__coucou_frame.html?v=${++this.loads}`;
+    const query = this.mini ? `mini=1&v=${++this.loads}` : `v=${++this.loads}`;
+    frame.src = `${info.baseUrl}__coucou_frame.html?${query}`;
     this.frame = frame;
     this.container.appendChild(frame);
   }
@@ -67,6 +77,13 @@ export class MascotHost {
   /** A click on the mascot. */
   poke(): void {
     if (this.ready) this.send({ type: "poke" });
+  }
+
+  /** Pauses or resumes drawing, without repeating an unchanged request. */
+  setPaused(paused: boolean): void {
+    if (paused === this.paused) return;
+    this.paused = paused;
+    if (this.ready) this.send({ type: "pause", paused });
   }
 
   dispose(): void {

@@ -71,3 +71,8 @@ export function mascotStateFor(
 export function playsImmediately(state: BotStateName): boolean {
   return state === "approval" || state === "question";
 }
+
+/** A sleeping mascot keeps its last frame until the pointer wakes it. */
+export function shouldPause(state: BotStateName, hovered: boolean): boolean {
+  return state === "sleeping" && !hovered;
+}

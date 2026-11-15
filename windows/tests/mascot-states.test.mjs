@@ -2,7 +2,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { MASCOT_STATE_FALLBACKS, playsImmediately, resolveMascotState } from "../src/mascot/states.ts";
+import { MASCOT_STATE_FALLBACKS, playsImmediately, resolveMascotState, shouldPause } from "../src/mascot/states.ts";
 
 const BLOB = ["idle", "listening", "thinking", "talking", "working", "happy", "done", "error"];
 const VIDEO = ["idle", "thinking", "talking", "error"];
@@ -43,6 +43,12 @@ test("only approval and question are immediate", () => {
   assert.equal(playsImmediately("approval"), true);
   assert.equal(playsImmediately("question"), true);
   assert.equal(playsImmediately("working"), false);
+});
+
+test("only an unhovered sleeping mascot pauses", () => {
+  assert.equal(shouldPause("sleeping", false), true);
+  assert.equal(shouldPause("sleeping", true), false);
+  assert.equal(shouldPause("working", false), false);
 });
 
 const ORBI = ["idle", "listening", "thinking", "speaking", "working", "error", "celebrating", "surprised", "sleeping", "sad"];
