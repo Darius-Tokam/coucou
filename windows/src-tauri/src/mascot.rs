@@ -48,10 +48,33 @@ mascot-avatar { display: block; width: 100%; height: 100%; }
   var wanted = null;
   function tell(message) { window.parent.postMessage(message, "*"); }
   function play() { if (avatar && wanted) avatar.play(wanted.state, { immediate: wanted.immediate }); }
+  // The engine's canvas, wherever it sits in the shadow roots (none for a video).
+  function canvasIn(root) {
+    var all = root.querySelectorAll("*");
+    for (var i = 0; i < all.length; i++) {
+      if (all[i].tagName === "CANVAS") return all[i];
+      if (all[i].shadowRoot) { var c = canvasIn(all[i].shadowRoot); if (c) return c; }
+    }
+    return null;
+  }
   window.addEventListener("message", function (event) {
-    if (event.source !== window.parent || !event.data || event.data.type !== "state") return;
-    wanted = { state: String(event.data.state), immediate: !!event.data.immediate };
-    play();
+    if (event.source !== window.parent || !event.data) return;
+    var data = event.data;
+    if (data.type === "state") {
+      wanted = { state: String(data.state), immediate: !!data.immediate };
+      play();
+    } else if (data.type === "pointer") {
+      // The island is the one that sees the mouse: it is replayed here, where
+      // the engine listens for it (and looks at the cursor).
+      window.dispatchEvent(new PointerEvent("pointermove", {
+        clientX: Number(data.x), clientY: Number(data.y), pointerType: "mouse", bubbles: true,
+      }));
+    } else if (data.type === "poke" && avatar) {
+      // A click on the engine's canvas: Wobnimo hops, and mascot.js plays its
+      // "clicked" state when the export has one.
+      var target = canvasIn(avatar.shadowRoot || avatar) || avatar;
+      target.click();
+    }
   });
   var script = document.createElement("script");
   script.src = "mascot.js";
@@ -60,7 +83,7 @@ mascot-avatar { display: block; width: 100%; height: 100%; }
     customElements.whenDefined("mascot-avatar").then(function () {
       var el = document.createElement("mascot-avatar");
       el.setAttribute("manifest", "manifest.json");
-      el.setAttribute("follow-cursor", "false");
+      el.setAttribute("parallax", "false");
       document.body.appendChild(el);
       return el.ready().then(function () { avatar = el; tell({ type: "ready" }); play(); });
     }).catch(function (err) { tell({ type: "error", message: String(err) }); });
@@ -70,6 +93,24 @@ mascot-avatar { display: block; width: 100%; height: 100%; }
 </script>
 </body></html>
 "#;
+
+/// The 3D engine (Wobnimo) draws its character edge to edge: a hop or a shake
+/// leaves the box and is cut. Unless the export sets its own, Coucou frames it
+/// wider (the camera sees 1.2 times more: the robot fills about 83 % of the box).
+const CORNER_FRAMING_3D: f64 = 1.2;
+
+/// The manifest as the mascot gets it: a 3D one framed with room to move.
+fn with_room(bytes: Vec<u8>) -> Vec<u8> {
+    let Ok(mut manifest) = serde_json::from_slice::<serde_json::Value>(&bytes) else { return bytes };
+    if manifest.get("engine").and_then(|e| e.as_str()) != Some("3d") {
+        return bytes;
+    }
+    let Some(fields) = manifest.as_object_mut() else { return bytes };
+    let config = fields.entry("engine_config").or_insert_with(|| serde_json::json!({}));
+    let Some(config) = config.as_object_mut() else { return bytes };
+    config.entry("framing").or_insert(serde_json::json!(CORNER_FRAMING_3D));
+    serde_json::to_vec(&manifest).unwrap_or(bytes)
+}
 
 /// Answers `url_path` from the files under `root`, with an optional `Range` header.
 pub fn respond(root: &Path, url_path: &str, range: Option<&str>) -> Served {
@@ -87,6 +128,7 @@ pub fn respond(root: &Path, url_path: &str, range: Option<&str>) -> Served {
     let rel = percent_decode(url_path.split(['?', '#']).next().unwrap_or(""));
     let Some(file) = file_inside(root, rel.trim_start_matches('/')) else { return not_found() };
     let Ok(bytes) = std::fs::read(&file) else { return not_found() };
+    let bytes = if rel.trim_start_matches('/') == "manifest.json" { with_room(bytes) } else { bytes };
 
     let mut headers = vec![
         ("Content-Type", mime_of(&file).to_string()),
@@ -533,6 +575,42 @@ mod tests {
         let page = String::from_utf8(served.body).unwrap();
         assert!(page.contains("mascot-avatar"));
         assert!(page.contains("color-scheme: dark"));
+    }
+
+    const ORBI_3D: &str = r#"{"version":2,"name":"orbi","engine":"3d","engine_src":"engines/wobnimo.js",
+        "engine_config":{},"default_state":"idle","alpha":"none","states":{"idle":{"loop":true}}}"#;
+
+    fn served_manifest(root: &Path) -> serde_json::Value {
+        serde_json::from_slice(&respond(root, "/manifest.json", None).body).unwrap()
+    }
+
+    #[test]
+    fn a_3d_mascot_is_framed_with_room_to_hop() {
+        let root = scratch("framing");
+        write(&root.join("manifest.json"), ORBI_3D);
+        assert_eq!(served_manifest(&root)["engine_config"]["framing"], serde_json::json!(CORNER_FRAMING_3D));
+        // A manifest without engine_config gets one.
+        write(&root.join("manifest.json"), &ORBI_3D.replace(r#""engine_config":{},"#, ""));
+        assert_eq!(served_manifest(&root)["engine_config"]["framing"], serde_json::json!(CORNER_FRAMING_3D));
+    }
+
+    #[test]
+    fn an_exports_own_framing_and_other_engines_are_left_alone() {
+        let root = scratch("framing-own");
+        write(&root.join("manifest.json"), &ORBI_3D.replace(r#""engine_config":{}"#, r#""engine_config":{"framing":1.5}"#));
+        assert_eq!(served_manifest(&root)["engine_config"]["framing"], serde_json::json!(1.5));
+        let blob = scratch("framing-blob");
+        write(&blob.join("manifest.json"), BLOB);
+        assert_eq!(respond(&blob, "/manifest.json", None).body, BLOB.as_bytes());
+    }
+
+    #[test]
+    fn the_frame_page_lets_the_mascot_see_the_cursor_and_the_clicks() {
+        let root = scratch("frame-input");
+        let page = String::from_utf8(respond(&root, "/__coucou_frame.html", None).body).unwrap();
+        assert!(!page.contains(r#"setAttribute("follow-cursor", "false")"#), "the engine must track the cursor");
+        assert!(page.contains(r#""pointer""#) && page.contains("pointermove"));
+        assert!(page.contains(r#""poke""#));
     }
 
     #[test]

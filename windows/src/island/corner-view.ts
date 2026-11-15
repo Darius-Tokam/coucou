@@ -6,9 +6,10 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Bridge, type CornerLayout, type MascotInfo } from "../core/bridge";
 import type { BotStateName } from "../core/layout";
 import { MascotHost } from "../mascot/host";
-import { playsImmediately, resolveMascotState } from "../mascot/states";
+import { mascotStateFor, playsImmediately } from "../mascot/states";
 import { BotEngine } from "../mochi/engine";
 import { DRAG_THRESHOLD } from "../mochi/desktop-logic";
+import { mascotPointer } from "./corner";
 
 /** What the island does when the mascot is hovered, left or clicked. */
 export interface CornerHandlers {
@@ -33,6 +34,9 @@ export class CornerView {
   private failed = false;
   private enabled = false;
   private state: BotStateName = "idle";
+  private layout: CornerLayout | null = null;
+  /** The pointer is on the mascot: a calm mascot plays its hover animation. */
+  private hovered = false;
 
   private readonly mochiCanvas: HTMLCanvasElement;
   private readonly mochi = new BotEngine();
@@ -75,6 +79,7 @@ export class CornerView {
   }
 
   setLayout(layout: CornerLayout) {
+    this.layout = layout;
     const m = layout.mascot;
     Object.assign(this.box.style, { left: `${m.x}px`, top: `${m.y}px`, width: `${m.w}px`, height: `${m.h}px` });
   }
@@ -88,15 +93,38 @@ export class CornerView {
     this.play();
   }
 
+  /**
+   * The cursor in window-logical coordinates, wherever it is on screen (Rust's
+   * poll): the mascot looks at it, and reacts while it is on him.
+   */
+  pointer(x: number, y: number) {
+    if (!this.layout) return;
+    const p = mascotPointer(this.layout, x, y);
+    if (this.mascotShown) this.host.pointer(p.x, p.y);
+    this.setHovered(p.inside);
+  }
+
+  private setHovered(on: boolean) {
+    if (on === this.hovered) return;
+    this.hovered = on;
+    // A hover is answered at once, even by a video between two loops.
+    this.play(true);
+  }
+
+  private get mascotShown(): boolean {
+    return this.info != null && !this.failed;
+  }
+
   setState(state: BotStateName) {
     if (state === this.state) return;
     this.state = state;
     this.play();
   }
 
-  private play() {
+  private play(now = false) {
     if (this.info && !this.failed) {
-      this.host.play(resolveMascotState(this.state, this.info.states, this.info.defaultState), playsImmediately(this.state));
+      const name = mascotStateFor(this.state, this.hovered, this.info.states, this.info.defaultState);
+      this.host.play(name, now || playsImmediately(this.state));
     } else {
       this.mochi.setState(this.state);
     }
@@ -147,8 +175,14 @@ export class CornerView {
   }
 
   private wireInput() {
-    this.layer.addEventListener("pointerenter", () => this.handlers.enter());
-    this.layer.addEventListener("pointerleave", () => this.handlers.leave());
+    this.layer.addEventListener("pointerenter", () => {
+      this.setHovered(true);
+      this.handlers.enter();
+    });
+    this.layer.addEventListener("pointerleave", () => {
+      this.setHovered(false);
+      this.handlers.leave();
+    });
     this.layer.addEventListener("pointerdown", (e) => {
       if (e.button !== 0) return;
       this.press = { x: e.clientX, y: e.clientY };
@@ -162,7 +196,11 @@ export class CornerView {
       void Bridge.cornerDragStarted().then(() => getCurrentWindow().startDragging());
     });
     this.layer.addEventListener("pointerup", (e) => {
-      if (this.press && e.button === 0) this.handlers.click();
+      if (this.press && e.button === 0) {
+        // The mascot reacts to every click, a double click included.
+        if (this.mascotShown) this.host.poke();
+        this.handlers.click();
+      }
       this.press = null;
     });
   }

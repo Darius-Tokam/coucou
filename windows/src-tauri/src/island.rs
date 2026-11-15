@@ -7,7 +7,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, Monitor, PhysicalPosition, PhysicalSize, WebviewWindow};
@@ -35,6 +35,33 @@ const FAR_PERIOD_MS: u64 = 50;
 /// Whether a cursor at window-logical (x, y) is near a window of `size`.
 fn is_near(x: f64, y: f64, size: (f64, f64)) -> bool {
     x >= -NEAR_ZONE && x <= size.0 + NEAR_ZONE && y >= -NEAR_ZONE && y <= size.1 + NEAR_ZONE
+}
+
+/// Folded in a corner, the mascot follows a cursor this close to its centre
+/// (logical px): Wobnimo looks up to about 3.3 widths away from itself.
+const GAZE_RADIUS: f64 = 700.0;
+/// The parked poll's period while the cursor is that close, in ms (30 Hz).
+const GAZE_NEAR_MS: u64 = 33;
+/// The parked poll's period otherwise, in ms.
+const PARKED_WAIT_MS: u64 = 250;
+
+/// How long the parked poll waits before reading a cursor at window-logical
+/// (x, y) again, around a folded corner window of `size`.
+fn gaze_wait_ms(x: f64, y: f64, size: (f64, f64)) -> u64 {
+    if (x - size.0 / 2.0).hypot(y - size.1 / 2.0) <= GAZE_RADIUS { GAZE_NEAR_MS } else { PARKED_WAIT_MS }
+}
+
+/// The cursor in the window's logical coordinates, with the window's logical size.
+fn cursor_in_window(win: &WebviewWindow) -> Option<(f64, f64, (f64, f64))> {
+    let origin = win.outer_position().ok()?;
+    let scale = win.scale_factor().unwrap_or(1.0);
+    let size = win.inner_size().ok()?;
+    let (cx, cy) = cursor_physical()?;
+    Some((
+        (cx - origin.x as f64) / scale,
+        (cy - origin.y as f64) / scale,
+        (size.width as f64 / scale, size.height as f64 / scale),
+    ))
 }
 
 /// Margin around the island that still counts as "on the island", in logical px.
@@ -67,8 +94,9 @@ pub struct IslandRect {
     pub h: f64,
 }
 
-/// Side of the MascotForge mascot (or Mochi) in corner mode, logical px.
-pub const MASCOT_SIZE: f64 = 200.0;
+/// Side of the MascotForge mascot (or Mochi) in corner mode, logical px. Wider
+/// than the mascot itself: a hop or a shake must not leave the window.
+pub const MASCOT_SIZE: f64 = 240.0;
 /// Gap between the mascot and the edges of the work area, logical px.
 const CORNER_MARGIN: f64 = 16.0;
 
@@ -648,18 +676,43 @@ pub fn spawn_cursor_poll(app: AppHandle, gate: Arc<PollGate>) {
             // Parked. Folded on Windows, a glance at the cursor four times a
             // second: on the closed island, it is told to wake up, whether or
             // not the webview delivers the pointer to such a small window.
-            let mut parked_ticks: u32 = 0;
+            //
+            // A folded corner mascot also follows the cursor with its eyes: while
+            // the cursor is near, it is read 30 times a second and the page hears
+            // `mascot-cursor`; far away, back to four times a second.
+            let mut wait = PARKED_WAIT_MS;
+            let mut last_wake = Instant::now();
+            let mut last_display = Instant::now();
+            let mut gaze: Option<(f64, f64)> = None;
             loop {
-                if gate.wait_active_for(Duration::from_millis(250)) {
+                if gate.wait_active_for(Duration::from_millis(wait)) {
                     break;
                 }
-                if platform::CURSOR_POLL && gate.collapsed.load(Ordering::Relaxed) {
+                wait = PARKED_WAIT_MS;
+                let folded = platform::CURSOR_POLL && gate.collapsed.load(Ordering::Relaxed);
+                if folded && last_wake.elapsed() >= Duration::from_millis(PARKED_WAIT_MS) {
+                    last_wake = Instant::now();
                     wake_if_hovered(&app, &gate);
+                }
+                let corner = corner_mode(&app).is_some();
+                if folded && corner {
+                    if let Some(win) = window(&app) {
+                        if let Some((x, y, size)) = cursor_in_window(&win) {
+                            wait = gaze_wait_ms(x, y, size);
+                            let near = wait == GAZE_NEAR_MS;
+                            let moved = gaze.map_or(true, |(gx, gy)| (x - gx).abs() >= 1.0 || (y - gy).abs() >= 1.0);
+                            // Near: every move. Leaving: once more, so the page sees it go.
+                            if moved && (near || gaze.is_some()) {
+                                let _ = win.emit("mascot-cursor", CursorPayload { x, y });
+                            }
+                            gaze = if near { Some((x, y)) } else { None };
+                        }
+                    }
                 }
                 // A corner mascot is folded nearly all the time: displays that
                 // come and go are watched from here too, every 2 s.
-                parked_ticks = parked_ticks.wrapping_add(1);
-                if parked_ticks % 8 == 0 && corner_mode(&app).is_some() {
+                if corner && last_display.elapsed() >= Duration::from_secs(2) {
+                    last_display = Instant::now();
                     let now = current_screen_key(&app);
                     if now.is_some() && now != last_screen {
                         let first = last_screen.is_none();
@@ -825,6 +878,14 @@ pub fn set_ignore_cursor(app: &AppHandle, ignore: bool) {
 mod corner_tests {
     use super::*;
 
+    #[test]
+    fn a_folded_mascot_watches_a_nearby_cursor_closely() {
+        // A 200 x 200 window: its centre is (100, 100).
+        assert_eq!(gaze_wait_ms(150.0, 120.0, (200.0, 200.0)), GAZE_NEAR_MS);
+        assert_eq!(gaze_wait_ms(-500.0, 100.0, (200.0, 200.0)), GAZE_NEAR_MS);
+        assert_eq!(gaze_wait_ms(-900.0, -400.0, (200.0, 200.0)), PARKED_WAIT_MS);
+    }
+
     fn rect(x: f64, y: f64, w: f64, h: f64) -> IslandRect {
         IslandRect { x, y, w, h }
     }
@@ -834,58 +895,58 @@ mod corner_tests {
     #[test]
     fn the_mascot_starts_bottom_right() {
         let layout = corner_layout(WORK, 1.0, None, None);
-        assert_eq!(layout.window, rect(1704.0, 824.0, 200.0, 200.0));
-        assert_eq!(layout.mascot, rect(0.0, 0.0, 200.0, 200.0));
+        assert_eq!(layout.window, rect(1664.0, 784.0, 240.0, 240.0));
+        assert_eq!(layout.mascot, rect(0.0, 0.0, 240.0, 240.0));
         assert_eq!(layout.panel, None);
     }
 
     #[test]
     fn the_panel_opens_toward_the_centre() {
         let layout = corner_layout(WORK, 1.0, None, Some((720.0, 320.0)));
-        assert_eq!(layout.window, rect(984.0, 704.0, 920.0, 320.0));
+        assert_eq!(layout.window, rect(944.0, 704.0, 960.0, 320.0));
         assert_eq!(layout.panel, Some(rect(0.0, 0.0, 720.0, 320.0)));
-        assert_eq!(layout.mascot, rect(720.0, 120.0, 200.0, 200.0));
+        assert_eq!(layout.mascot, rect(720.0, 80.0, 240.0, 240.0));
         // The mascot has not moved on screen.
-        assert_eq!((layout.window.x + layout.mascot.x, layout.window.y + layout.mascot.y), (1704.0, 824.0));
+        assert_eq!((layout.window.x + layout.mascot.x, layout.window.y + layout.mascot.y), (1664.0, 784.0));
     }
 
     #[test]
     fn a_top_left_mascot_opens_right_and_down() {
         let layout = corner_layout(WORK, 1.0, Some((16.0, 16.0)), Some((720.0, 320.0)));
-        assert_eq!(layout.window, rect(16.0, 16.0, 920.0, 320.0));
-        assert_eq!(layout.mascot, rect(0.0, 0.0, 200.0, 200.0));
-        assert_eq!(layout.panel, Some(rect(200.0, 0.0, 720.0, 320.0)));
+        assert_eq!(layout.window, rect(16.0, 16.0, 960.0, 320.0));
+        assert_eq!(layout.mascot, rect(0.0, 0.0, 240.0, 240.0));
+        assert_eq!(layout.panel, Some(rect(240.0, 0.0, 720.0, 320.0)));
     }
 
     #[test]
     fn the_panel_stays_on_screen() {
-        let short = rect(0.0, 0.0, 1920.0, 400.0);
-        let layout = corner_layout(short, 1.0, Some((1704.0, 100.0)), Some((720.0, 320.0)));
-        // Upward would put the panel at y = -20: it comes down to the top of the work area.
+        let short = rect(0.0, 0.0, 1920.0, 360.0);
+        let layout = corner_layout(short, 1.0, Some((1664.0, 70.0)), Some((720.0, 320.0)));
+        // Upward would put the panel at y = -10: it comes down to the top of the work area.
         assert_eq!(layout.window.y, 0.0);
         assert_eq!(layout.panel.map(|p| p.y), Some(0.0));
-        assert_eq!(layout.window.y + layout.mascot.y, 100.0);
+        assert_eq!(layout.window.y + layout.mascot.y, 70.0);
     }
 
     #[test]
     fn a_lost_screen_sends_the_mascot_home() {
         let layout = corner_layout(WORK, 1.0, Some((5000.0, 5000.0)), None);
-        assert_eq!(layout.window, rect(1704.0, 824.0, 200.0, 200.0));
+        assert_eq!(layout.window, rect(1664.0, 784.0, 240.0, 240.0));
     }
 
     #[test]
     fn scale_two_doubles_the_window() {
         let work = rect(0.0, 0.0, 3840.0, 2080.0);
         let layout = corner_layout(work, 2.0, None, None);
-        assert_eq!(layout.window.w, 400.0);
-        assert_eq!(layout.mascot.w, 200.0);
-        assert_eq!(layout.window.x, 3840.0 - 32.0 - 400.0);
+        assert_eq!(layout.window.w, 480.0);
+        assert_eq!(layout.mascot.w, 240.0);
+        assert_eq!(layout.window.x, 3840.0 - 32.0 - 480.0);
     }
 
     #[test]
     fn a_mascot_over_the_edge_is_pulled_back_in() {
         let layout = corner_layout(WORK, 1.0, Some((1800.0, 900.0)), None);
-        assert_eq!(layout.window, rect(1720.0, 840.0, 200.0, 200.0));
+        assert_eq!(layout.window, rect(1680.0, 800.0, 240.0, 240.0));
     }
 
     #[test]

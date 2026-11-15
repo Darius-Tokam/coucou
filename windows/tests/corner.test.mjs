@@ -75,3 +75,20 @@ test("a waiting approval is never clicked out of sight", async () => {
   const { mascotClickAction } = await import("../src/island/corner.ts");
   assert.equal(mascotClickAction({ open: true, pinned: true, approvalWaits: true }), "none");
 });
+
+test("the second click of a double click leaves the card open", async () => {
+  const { mascotClickAction } = await import("../src/island/corner.ts");
+  assert.equal(mascotClickAction({ open: true, pinned: true, approvalWaits: false, sinceOpenMs: 200 }), "none");
+});
+
+test("a click well after opening closes the card", async () => {
+  const { mascotClickAction } = await import("../src/island/corner.ts");
+  assert.equal(mascotClickAction({ open: true, pinned: true, approvalWaits: false, sinceOpenMs: 1500 }), "close");
+});
+
+test("the cursor is given to the mascot in its own coordinates", async () => {
+  const { mascotPointer } = await import("../src/island/corner.ts");
+  const layout = { window: { x: 0, y: 0, w: 600, h: 500 }, mascot: { x: 400, y: 300, w: 200, h: 200 }, panel: null };
+  assert.deepEqual(mascotPointer(layout, 450, 320), { x: 50, y: 20, inside: true });
+  assert.deepEqual(mascotPointer(layout, 100, 320), { x: -300, y: 20, inside: false });
+});

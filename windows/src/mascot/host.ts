@@ -58,6 +58,16 @@ export class MascotHost {
     if (this.ready) this.send({ type: "state", state, immediate });
   }
 
+  /** The cursor, in the iframe's coordinates. */
+  pointer(x: number, y: number): void {
+    if (this.ready) this.send({ type: "pointer", x, y });
+  }
+
+  /** A click on the mascot. */
+  poke(): void {
+    if (this.ready) this.send({ type: "poke" });
+  }
+
   private send(message: HostMessage): void {
     if (this.origin) this.frame?.contentWindow?.postMessage(message, this.origin);
   }

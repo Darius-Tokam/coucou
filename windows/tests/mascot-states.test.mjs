@@ -44,3 +44,45 @@ test("only approval and question are immediate", () => {
   assert.equal(playsImmediately("question"), true);
   assert.equal(playsImmediately("working"), false);
 });
+
+const ORBI = ["idle", "listening", "thinking", "speaking", "working", "error", "celebrating", "surprised", "sleeping", "sad"];
+
+test("a hovered idle mascot is surprised", async () => {
+  const { mascotStateFor } = await import("../src/mascot/states.ts");
+  assert.equal(mascotStateFor("idle", true, ORBI, "idle"), "surprised");
+});
+
+test("an export's own hover state wins", async () => {
+  const { mascotStateFor } = await import("../src/mascot/states.ts");
+  assert.equal(mascotStateFor("idle", true, [...ORBI, "hover"], "idle"), "hover");
+});
+
+test("hovering wakes a sleeping mascot", async () => {
+  const { mascotStateFor } = await import("../src/mascot/states.ts");
+  assert.equal(mascotStateFor("sleeping", true, ORBI, "idle"), "surprised");
+});
+
+test("an agent at work keeps its animation under the pointer", async () => {
+  const { mascotStateFor } = await import("../src/mascot/states.ts");
+  assert.equal(mascotStateFor("working", true, ORBI, "idle"), "working");
+  assert.equal(mascotStateFor("approval", true, ORBI, "idle"), "listening");
+});
+
+test("no hover, no change", async () => {
+  const { mascotStateFor } = await import("../src/mascot/states.ts");
+  assert.equal(mascotStateFor("idle", false, ORBI, "idle"), "idle");
+});
+
+test("the corner mascot shows the agent that needs you most, whatever pill is open", async () => {
+  const { cornerAgentState } = await import("../src/mascot/states.ts");
+  assert.equal(cornerAgentState(["idle", "working"], null), "working");
+  assert.equal(cornerAgentState(["working", "approval", "idle"], null), "approval");
+  assert.equal(cornerAgentState(["finished", "thinking"], null), "thinking");
+  assert.equal(cornerAgentState(["sleeping", "idle"], null), "idle");
+  assert.equal(cornerAgentState([], null), "idle");
+});
+
+test("a state Coucou forces wins over the agents", async () => {
+  const { cornerAgentState } = await import("../src/mascot/states.ts");
+  assert.equal(cornerAgentState(["working"], "dizzy"), "dizzy");
+});

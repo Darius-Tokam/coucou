@@ -13,18 +13,38 @@ export const CORNER_SUPPORTED =
 /** What a click on the corner mascot does. */
 export type MascotClick = "open" | "pin" | "close" | "none";
 
+/** Two clicks closer than this are a double click (Windows' default is 500 ms). */
+export const DOUBLE_CLICK_MS = 500;
+
 /**
- * Folded: open the card. Open by hover: keep it open. Pinned: close it,
- * except while an approval waits: folding it would hide Allow / Deny.
+ * Folded: open the card. Opened by Coucou itself (an approval, a notice): keep
+ * it open. Pinned: close it, except while an approval waits (folding it would
+ * hide Allow / Deny) and for the second click of a double click, which would
+ * undo the first.
  */
-export function mascotClickAction(s: { open: boolean; pinned: boolean; approvalWaits: boolean }): MascotClick {
+export function mascotClickAction(s: {
+  open: boolean;
+  pinned: boolean;
+  approvalWaits: boolean;
+  /** Since the click that opened the card; unknown counts as long ago. */
+  sinceOpenMs?: number;
+}): MascotClick {
   if (!s.open) return "open";
   if (!s.pinned) return "pin";
-  return s.approvalWaits ? "none" : "close";
+  if (s.approvalWaits || (s.sinceOpenMs ?? Infinity) < DOUBLE_CLICK_MS) return "none";
+  return "close";
 }
 
-/** Side of the corner mascot, logical px (island.rs MASCOT_SIZE). */
-export const MASCOT_SIZE = 200;
+/** The cursor (window-logical) in the mascot's own coordinates, and whether it is on it. */
+export function mascotPointer(layout: CornerLayout, x: number, y: number): { x: number; y: number; inside: boolean } {
+  const m = layout.mascot;
+  const lx = x - m.x;
+  const ly = y - m.y;
+  return { x: lx, y: ly, inside: lx >= 0 && ly >= 0 && lx <= m.w && ly <= m.h };
+}
+
+/** Side of the corner mascot's box, logical px (island.rs MASCOT_SIZE). */
+export const MASCOT_SIZE = 240;
 
 /** Seconds before the open card folds once the pointer has left it and the mascot. */
 export const CORNER_HOVER_CLOSE_S = 0.3;

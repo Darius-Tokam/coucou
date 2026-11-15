@@ -37,6 +37,7 @@ import {
   CORNER_HOVER_CLOSE_S, CORNER_SUPPORTED, HoverStart, MASCOT_SIZE, cornerRects, mascotClickAction, placeInPanel,
 } from "./corner";
 import { CornerView } from "./corner-view";
+import { cornerAgentState } from "../mascot/states";
 import type { ViewCommand } from "./shortcuts";
 import { DRAG_THRESHOLD } from "../mochi/desktop-logic";
 import { Updates } from "./update";
@@ -137,6 +138,8 @@ export class Island {
   private pushedRects = "";
   /** Corner mode: one hover per stay of the pointer on the folded mascot. */
   private cornerHover = new HoverStart();
+  /** When a click on the corner mascot last opened or pinned the card (ms). */
+  private cornerOpenedAt = -Infinity;
   /** The top island's hover close delay, put back when leaving corner mode. */
   private topHoverCloseDelay = 0.6;
 
@@ -980,17 +983,20 @@ export class Island {
   /** A click on the corner mascot opens the card and keeps it open; a second one closes it. */
   private clickMascot() {
     Sound.resume();
-    State.lastActivity = performance.now();
+    const now = performance.now();
+    State.lastActivity = now;
     const action = mascotClickAction({
       open: State.mode === "expanded",
       pinned: this.fsm.pinned,
       approvalWaits: State.pendingApproval != null,
+      sinceOpenMs: now - this.cornerOpenedAt,
     });
     if (action === "none") return;
     if (action === "close") {
       this.collapse();
       return;
     }
+    this.cornerOpenedAt = now;
     this.fsm.pinned = true;
     State.isPinned = true;
     if (action === "pin") this.fsm.userInteracted();
@@ -1262,6 +1268,7 @@ export class Island {
     // While the card is open the poll reports the pointer: a stay on the mascot
     // carries on, so a click that folds the card doesn't start a new hover.
     if (onMascot) this.cornerHover.enter(performance.now());
+    if (this.cornerMode) this.corner.pointer(x, y);
     const inIsland = onMascot || (
       x >= rect.x - HIT_MARGIN && x <= rect.x + rect.w + HIT_MARGIN &&
       y >= rect.y - HIT_MARGIN && y <= rect.y + rect.h + HIT_MARGIN);
@@ -1660,7 +1667,8 @@ export class Island {
 
     syncMiniBotStates(State.tasks);
     this.engine.setState(State.effectiveState);
-    this.corner.setState(State.effectiveState);
+    // The corner mascot shows every agent, not only the pill the panel is on.
+    this.corner.setState(cornerAgentState(State.tasks.map((t) => t.state), State.stateOverride));
   }
 
   /** A MascotForge mascot is in the corner: the panel shows no Mochi. */
@@ -1694,8 +1702,9 @@ export class Island {
     Sound.setEnabled(State.settings.soundEnabled);
     Sound.setVolume(State.settings.soundVolume);
     this.fsm.homeToPetitDelay = State.settings.autoCloseInterval;
-    // The corner card opens on hover and folds fast, whatever the top island does.
-    this.fsm.openOnHover = this.cornerMode || State.settings.openOnHover;
+    // The corner card opens on a click on the mascot, never on hover (hovering
+    // the mascot animates it), and folds fast once left.
+    this.fsm.openOnHover = !this.cornerMode && State.settings.openOnHover;
     this.fsm.hoverCloseDelay = this.cornerMode ? CORNER_HOVER_CLOSE_S : this.topHoverCloseDelay;
     this.corner.setEnabled(this.cornerMode);
     this.updateWindowCollapsed();
