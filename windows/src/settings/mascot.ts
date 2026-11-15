@@ -1,7 +1,7 @@
 // Settings → Mascot: where Coucou lives (top of the screen or a corner), and
 // which MascotForge export sits in the corner (src-tauri/src/mascot.rs).
 
-import { Bridge, onEvent, type MascotInfo } from "../core/bridge";
+import { Bridge, onEvent, type MascotChanged, type MascotInfo } from "../core/bridge";
 import type { Settings } from "../core/state";
 import { t } from "../i18n/i18n";
 import { h } from "../views/dom";
@@ -52,7 +52,7 @@ export function mascotSection(settings: () => Settings, save: () => void): HTMLE
     choose.textContent = t("Importing…");
     showNote(null);
     try {
-      const result = await Bridge.mascotImport(folder);
+      const result = await Bridge.mascotImport(folder, "claude");
       if (typeof result === "string") showNote("err", importErrorText(result));
       else show(result);
     } finally {
@@ -65,15 +65,17 @@ export function mascotSection(settings: () => Settings, save: () => void): HTMLE
   back.addEventListener("click", async () => {
     back.disabled = true;
     try {
-      await Bridge.mascotClear();
+      await Bridge.mascotClear("claude");
       show(null);
     } finally {
       back.disabled = false;
     }
   });
 
-  void Bridge.mascotCurrent().then(show);
-  void onEvent<MascotInfo | null>("mascot-changed", show);
+  void Bridge.mascotCurrent("claude").then(show);
+  void onEvent<MascotChanged>("mascot-changed", ({ slot, info }) => {
+    if (slot === "claude") show(info);
+  });
 
   return h(
     "section",

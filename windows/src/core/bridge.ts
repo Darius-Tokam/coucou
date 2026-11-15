@@ -40,9 +40,12 @@ export interface CornerLayout {
   window: Rect;
   mascot: Rect;
   panel: Rect | null;
+  minis: Rect[];
 }
 
-/** The MascotForge export Coucou shows in the corner (src-tauri/src/mascot.rs). */
+export type MascotSlot = "claude" | "codex";
+
+/** One MascotForge export Coucou can show (src-tauri/src/mascot.rs). */
 export interface MascotInfo {
   name: string;
   engine: "blob" | "3d" | "video";
@@ -56,15 +59,20 @@ export interface MascotInfo {
   baseUrl: string;
 }
 
+export interface MascotChanged {
+  slot: MascotSlot;
+  info: MascotInfo | null;
+}
+
 /**
  * Imports a MascotForge export. The info on success; on failure the error
  * code ("not_an_export", "bad_manifest", "wrong_version", "missing_file:<file>",
  * "io"), or "io" outside Tauri.
  */
-async function mascotImport(folder: string): Promise<MascotInfo | string> {
+async function mascotImport(folder: string, slot: MascotSlot): Promise<MascotInfo | string> {
   if (!IS_TAURI) return "io";
   try {
-    return await invoke<MascotInfo>("mascot_import", { folder });
+    return await invoke<MascotInfo>("mascot_import", { folder, slot });
   } catch (err) {
     return typeof err === "string" ? err : "io";
   }
@@ -279,6 +287,7 @@ export const Bridge = {
   /** Give the window keyboard focus (chat field) and take it away again. */
   focusWindow: (focused: boolean) => call<void>("focus_window", { focused }),
 
+  setCornerMinis: (count: number) => call<void>("set_corner_minis", { count }),
   reposition: () => call<void>("reposition"),
   fitZoom: (dpr: number) => call<boolean>("fit_zoom", { dpr }),
 
@@ -324,10 +333,10 @@ export const Bridge = {
   pickFolder: (start: string | null) => call<string | null>("pick_folder", { start }),
 
   mascotImport,
-  /** The active MascotForge mascot, null for Mochi. */
-  mascotCurrent: () => call<MascotInfo | null>("mascot_current"),
-  /** Back to Mochi. */
-  mascotClear: () => call<void>("mascot_clear"),
+  /** The active MascotForge mascot in one slot, null for Mochi. */
+  mascotCurrent: (slot: MascotSlot) => call<MascotInfo | null>("mascot_current", { slot }),
+  /** Back to Mochi in one slot. */
+  mascotClear: (slot: MascotSlot) => call<void>("mascot_clear", { slot }),
 
   /**
    * A file dropped on a session: its window comes forward and the paths are

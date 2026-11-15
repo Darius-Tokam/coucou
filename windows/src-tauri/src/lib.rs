@@ -290,6 +290,15 @@ fn reposition(app: AppHandle, shared: State<Shared>) {
     island::apply_geometry(&app, &pref, collapsed.then_some(size));
 }
 
+#[tauri::command]
+fn set_corner_minis(app: AppHandle, shared: State<Shared>, count: usize) {
+    island::CORNER_MINIS.store(count, Ordering::Relaxed);
+    let pref = shared.settings.lock().unwrap().screen.clone();
+    let collapsed = shared.gate.collapsed.load(Ordering::Relaxed);
+    let size = *shared.gate.collapsed_size.lock().unwrap();
+    island::apply_geometry(&app, &pref, collapsed.then_some(size));
+}
+
 /// The panel is laid out in CSS px against the window's own scale. If the webview
 /// reports a different devicePixelRatio (it ends up bigger than the window and gets
 /// cut), correct its zoom so one CSS px is one logical px again.
@@ -946,7 +955,14 @@ pub fn run() {
         // The active MascotForge mascot's files, for the island's iframe (mascot.rs).
         .register_uri_scheme_protocol("mascot", |_ctx, request| {
             let range = request.headers().get("range").and_then(|v| v.to_str().ok());
-            let served = mascot::respond(&mascot::current_dir(), request.uri().path(), range);
+            let served = match mascot::route(request.uri().path()) {
+                Some((slot, rest)) => mascot::respond(&mascot::slot_dir(slot), &rest, range),
+                None => mascot::Served {
+                    status: 404,
+                    headers: vec![("Access-Control-Allow-Origin", "*".into())],
+                    body: Vec::new(),
+                },
+            };
             let mut response = tauri::http::Response::builder().status(served.status);
             for (name, value) in served.headers {
                 response = response.header(name, value);
@@ -1001,6 +1017,7 @@ pub fn run() {
             corner_drag_started,
             focus_window,
             reposition,
+            set_corner_minis,
             fit_zoom,
             hub_shown,
             list_monitors,

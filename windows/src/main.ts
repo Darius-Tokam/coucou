@@ -1,7 +1,7 @@
 // Entry point: boot the bridge, wire the island, start the greeting.
 
 import "./style.css";
-import { Bridge, IS_TAURI, onEvent, type CornerLayout, type MascotInfo } from "./core/bridge";
+import { Bridge, IS_TAURI, onEvent, type CornerLayout, type MascotChanged } from "./core/bridge";
 import { Sound } from "./core/sound";
 import { State, type Settings } from "./core/state";
 import { Island } from "./island/island";
@@ -67,10 +67,12 @@ async function main() {
 
   // Corner mode: where Rust put the mascot, and which MascotForge mascot it is.
   await onEvent<CornerLayout>("corner-layout", (layout) => island.setCornerLayout(layout));
-  await onEvent<MascotInfo | null>("mascot-changed", (info) => island.corner.load(info));
+  await onEvent<MascotChanged>("mascot-changed", ({ slot, info }) => {
+    if (slot === "claude") island.corner.load(info);
+  });
   // Folded in a corner, Rust still reports a cursor near the mascot: he follows it.
   await onEvent<{ x: number; y: number }>("mascot-cursor", (p) => island.corner.pointer(p.x, p.y));
-  island.corner.load(await Bridge.mascotCurrent());
+  island.corner.load(await Bridge.mascotCurrent("claude"));
   // Rust placed the window before this page listened: ask again to hear where.
   void Bridge.reposition();
 

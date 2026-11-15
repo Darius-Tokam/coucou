@@ -5,7 +5,7 @@
 // centre of the main display inside a borderless, transparent, always-on-top
 // window that never takes focus.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
@@ -97,23 +97,33 @@ pub struct IslandRect {
 /// Side of the MascotForge mascot (or Mochi) in corner mode, logical px. Wider
 /// than the mascot itself: a hop or a shake must not leave the window.
 pub const MASCOT_SIZE: f64 = 240.0;
+pub const MINI_SIZE: f64 = 120.0;
+pub const MINI_GAP: f64 = 8.0;
 /// Gap between the mascot and the edges of the work area, logical px.
 const CORNER_MARGIN: f64 = 16.0;
+pub(crate) static CORNER_MINIS: AtomicUsize = AtomicUsize::new(0);
 
 /// Corner mode: where the window goes and what sits where inside it.
-/// `window` is in physical screen px; `mascot` and `panel` in window-logical px.
-#[derive(Serialize, Clone, Copy, Debug, PartialEq)]
+/// `window` is in physical screen px; the other rectangles are window-logical px.
+#[derive(Serialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct CornerLayout {
     pub window: IslandRect,
     pub mascot: IslandRect,
     pub panel: Option<IslandRect>,
+    pub minis: Vec<IslandRect>,
 }
 
 /// The window for the mascot at `mascot_at` (physical top-left; None, or off
 /// the work area: the bottom-right corner), and the panel of logical size
 /// `panel` beside it toward the centre of `work` (physical), kept on screen.
-pub fn corner_layout(work: IslandRect, scale: f64, mascot_at: Option<(f64, f64)>, panel: Option<(f64, f64)>) -> CornerLayout {
+pub fn corner_layout(
+    work: IslandRect,
+    scale: f64,
+    mascot_at: Option<(f64, f64)>,
+    panel: Option<(f64, f64)>,
+    minis: usize,
+) -> CornerLayout {
     let size = MASCOT_SIZE * scale;
     let margin = CORNER_MARGIN * scale;
     let (right, bottom) = (work.x + work.w, work.y + work.h);
@@ -125,29 +135,97 @@ pub fn corner_layout(work: IslandRect, scale: f64, mascot_at: Option<(f64, f64)>
         .map(|(x, y)| (x.min(right - size).max(work.x), y.min(bottom - size).max(work.y)))
         .unwrap_or(home);
     let mascot = IslandRect { x: mx, y: my, w: size, h: size };
-
-    let Some((pw, ph)) = panel else {
-        return CornerLayout { window: mascot, mascot: IslandRect { x: 0.0, y: 0.0, w: MASCOT_SIZE, h: MASCOT_SIZE }, panel: None };
-    };
-    let (pw, ph) = (pw * scale, ph * scale);
-    // Toward the centre: left of a mascot in the right half, above one in the bottom half.
     let left = mx + size / 2.0 >= work.x + work.w / 2.0;
     let up = my + size / 2.0 >= work.y + work.h / 2.0;
-    let px = if left { mx - pw } else { mx + size };
-    let py = if up { my + size - ph } else { my };
-    let px = px.min(right - pw).max(work.x);
-    let py = py.min(bottom - ph).max(work.y);
-    let panel = IslandRect { x: px, y: py, w: pw, h: ph };
 
-    let x0 = mascot.x.min(panel.x);
-    let y0 = mascot.y.min(panel.y);
-    let x1 = (mascot.x + mascot.w).max(panel.x + panel.w);
-    let y1 = (mascot.y + mascot.h).max(panel.y + panel.h);
-    let inside = |r: IslandRect| IslandRect { x: (r.x - x0) / scale, y: (r.y - y0) / scale, w: r.w / scale, h: r.h / scale };
+    if minis == 0 {
+        let Some((pw, ph)) = panel else {
+            return CornerLayout {
+                window: mascot,
+                mascot: IslandRect { x: 0.0, y: 0.0, w: MASCOT_SIZE, h: MASCOT_SIZE },
+                panel: None,
+                minis: Vec::new(),
+            };
+        };
+        let (pw, ph) = (pw * scale, ph * scale);
+        let px = if left { mx - pw } else { mx + size };
+        let py = if up { my + size - ph } else { my };
+        let px = px.min(right - pw).max(work.x);
+        let py = py.min(bottom - ph).max(work.y);
+        let panel = IslandRect { x: px, y: py, w: pw, h: ph };
+        let x0 = mascot.x.min(panel.x);
+        let y0 = mascot.y.min(panel.y);
+        let x1 = (mascot.x + mascot.w).max(panel.x + panel.w);
+        let y1 = (mascot.y + mascot.h).max(panel.y + panel.h);
+        let inside = |r: IslandRect| IslandRect {
+            x: (r.x - x0) / scale,
+            y: (r.y - y0) / scale,
+            w: r.w / scale,
+            h: r.h / scale,
+        };
+        return CornerLayout {
+            window: IslandRect { x: x0, y: y0, w: x1 - x0, h: y1 - y0 },
+            mascot: inside(mascot),
+            panel: Some(inside(panel)),
+            minis: Vec::new(),
+        };
+    }
+
+    let mini_size = MINI_SIZE * scale;
+    let gap = MINI_GAP * scale;
+    let room = if left { mx - work.x } else { right - (mx + size) };
+    let per_row = (((room + gap) / (mini_size + gap)).floor() as usize).max(1);
+    let mut mini_rects = Vec::with_capacity(minis);
+    for i in 0..minis {
+        let row = (i / per_row) as f64;
+        let column = (i % per_row) as f64;
+        let x = if left {
+            mx - gap - mini_size - column * (mini_size + gap)
+        } else {
+            mx + size + gap + column * (mini_size + gap)
+        };
+        let y = if up {
+            my + size - mini_size - row * (mini_size + gap)
+        } else {
+            my + row * (mini_size + gap)
+        };
+        mini_rects.push(IslandRect { x, y, w: mini_size, h: mini_size });
+    }
+
+    let mut block_rects = Vec::with_capacity(minis + 1);
+    block_rects.push(mascot);
+    block_rects.extend(mini_rects.iter().copied());
+    let block = bounding(&block_rects);
+    let panel = panel.map(|(pw, ph)| {
+        let (pw, ph) = (pw * scale, ph * scale);
+        let px = if left { mascot.x + mascot.w - pw } else { mascot.x };
+        let px = px.min(right - pw).max(work.x);
+        let above = block.y - gap - ph;
+        let below = block.y + block.h + gap;
+        let fits = |y: f64| y >= work.y && y + ph <= bottom;
+        let preferred = if up { above } else { below };
+        let alternate = if up { below } else { above };
+        let py = if fits(preferred) { preferred } else { alternate };
+        let py = py.min(bottom - ph).max(work.y);
+        IslandRect { x: px, y: py, w: pw, h: ph }
+    });
+
+    let mut drawn = block_rects;
+    if let Some(panel) = panel {
+        drawn.push(panel);
+    }
+    let window = bounding(&drawn);
+    let inside = |r: IslandRect| IslandRect {
+        x: (r.x - window.x) / scale,
+        y: (r.y - window.y) / scale,
+        w: r.w / scale,
+        h: r.h / scale,
+    };
     CornerLayout {
-        window: IslandRect { x: x0, y: y0, w: x1 - x0, h: y1 - y0 },
+        window,
         mascot: inside(mascot),
-        panel: Some(inside(panel)),
+        panel: panel.map(|rect| inside(rect)),
+        minis: mini_rects.into_iter().map(|rect| inside(rect)).collect(),
     }
 }
 
@@ -632,7 +710,13 @@ fn apply_corner(win: &WebviewWindow, m: &Monitor, corner_pos: Option<(f64, f64)>
         .find(|other| work_of(other) == work)
         .map(|other| other.scale_factor())
         .unwrap_or_else(|| m.scale_factor());
-    let layout = corner_layout(work, scale, corner_pos, open.then_some((PANEL_W, PANEL_H)));
+    let layout = corner_layout(
+        work,
+        scale,
+        corner_pos,
+        open.then_some((PANEL_W, PANEL_H)),
+        CORNER_MINIS.load(Ordering::Relaxed),
+    );
     let w = layout.window;
     let _ = win.set_size(PhysicalSize::new(w.w.round() as u32, w.h.round() as u32));
     let _ = win.set_position(PhysicalPosition::new(w.x.round() as i32, w.y.round() as i32));

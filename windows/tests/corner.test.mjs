@@ -10,14 +10,16 @@ const BOTTOM_RIGHT = {
   window: { x: 984, y: 704, w: 920, h: 320 },
   mascot: { x: 720, y: 120, w: 200, h: 200 },
   panel: { x: 0, y: 0, w: 720, h: 320 },
+  minis: [],
 };
 // Mascot top-left: the panel area is on its right, top-aligned.
 const TOP_LEFT = {
   window: { x: 16, y: 16, w: 920, h: 320 },
   mascot: { x: 0, y: 0, w: 200, h: 200 },
   panel: { x: 200, y: 0, w: 720, h: 320 },
+  minis: [],
 };
-const CLOSED = { window: { x: 1704, y: 824, w: 200, h: 200 }, mascot: { x: 0, y: 0, w: 200, h: 200 }, panel: null };
+const CLOSED = { window: { x: 1704, y: 824, w: 200, h: 200 }, mascot: { x: 0, y: 0, w: 200, h: 200 }, panel: null, minis: [] };
 
 test("closed corner hits only the mascot", () => {
   assert.deepEqual(cornerRects(CLOSED, null), [CLOSED.mascot]);
@@ -88,7 +90,7 @@ test("a click well after opening closes the card", async () => {
 
 test("the cursor is given to the mascot in its own coordinates", async () => {
   const { mascotPointer } = await import("../src/island/corner.ts");
-  const layout = { window: { x: 0, y: 0, w: 600, h: 500 }, mascot: { x: 400, y: 300, w: 200, h: 200 }, panel: null };
+  const layout = { window: { x: 0, y: 0, w: 600, h: 500 }, mascot: { x: 400, y: 300, w: 200, h: 200 }, panel: null, minis: [] };
   assert.deepEqual(mascotPointer(layout, 450, 320), { x: 50, y: 20, inside: true });
   assert.deepEqual(mascotPointer(layout, 100, 320), { x: -300, y: 20, inside: false });
 });

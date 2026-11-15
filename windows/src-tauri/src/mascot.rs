@@ -2,7 +2,7 @@
 //
 // An export is a `mascot/` folder: manifest.json (version 2), mascot.js (the
 // <mascot-avatar> web component), and either an engine script (blob, 3D) or one
-// clip per state (video). Coucou copies it to platform::config_dir()/mascots/current,
+// clip per state (video). Coucou copies it under platform::config_dir()/mascots,
 // so the user can move or delete the original, and the island loads it from
 // there through the `mascot` protocol below. Tauri's asset protocol can't do:
 // it sends no Access-Control-Allow-Origin, and the 3D engine is an ES module,
@@ -22,6 +22,42 @@ use tauri::{AppHandle, Emitter};
 pub const BASE_URL: &str = "http://mascot.localhost/";
 #[cfg(not(windows))]
 pub const BASE_URL: &str = "mascot://localhost/";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Slot {
+    Claude,
+    Codex,
+}
+
+impl Slot {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "claude" => Some(Self::Claude),
+            "codex" => Some(Self::Codex),
+            _ => None,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Claude => "claude",
+            Self::Codex => "codex",
+        }
+    }
+
+    fn folder(self) -> &'static str {
+        match self {
+            Self::Claude => "current",
+            Self::Codex => "codex",
+        }
+    }
+}
+
+/// Splits the export slot from a path served by the `mascot` protocol.
+pub fn route(url_path: &str) -> Option<(Slot, String)> {
+    let (name, rest) = url_path.strip_prefix('/')?.split_once('/')?;
+    Some((Slot::parse(name)?, format!("/{rest}")))
+}
 
 /// One response of the `mascot` protocol.
 #[derive(Debug)]
@@ -237,8 +273,8 @@ pub fn mascots_dir() -> PathBuf {
     platform::config_dir().join("mascots")
 }
 
-pub fn current_dir() -> PathBuf {
-    mascots_dir().join("current")
+pub fn slot_dir(slot: Slot) -> PathBuf {
+    mascots_dir().join(slot.folder())
 }
 
 /// The export folder inside what the user picked: the folder itself, or its `mascot/`.
@@ -259,7 +295,7 @@ fn file_inside(dir: &Path, rel: &str) -> Option<PathBuf> {
 }
 
 /// Reads and checks an export folder.
-pub fn read_export(dir: &Path) -> Result<MascotInfo, ImportError> {
+pub fn read_export(dir: &Path, slot: Slot) -> Result<MascotInfo, ImportError> {
     let manifest_path = dir.join("manifest.json");
     let text = std::fs::read_to_string(&manifest_path).map_err(|_| ImportError::NotAnExport)?;
     let manifest: serde_json::Value = serde_json::from_str(&text).map_err(|_| ImportError::BadManifest)?;
@@ -296,7 +332,7 @@ pub fn read_export(dir: &Path) -> Result<MascotInfo, ImportError> {
         default_state,
         manifest_path: manifest_path.to_string_lossy().into_owned(),
         script_path: script.to_string_lossy().into_owned(),
-        base_url: BASE_URL.to_string(),
+        base_url: format!("{BASE_URL}{}/", slot.name()),
     })
 }
 
@@ -316,18 +352,23 @@ fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Copies `src` to `dest_root/current`, keeping the old one if anything fails.
-pub fn install(src: &Path, dest_root: &Path) -> Result<MascotInfo, ImportError> {
+/// Copies `src` to the named slot folder, keeping the old one if anything fails.
+pub fn install(src: &Path, dest_root: &Path, name: &str) -> Result<MascotInfo, ImportError> {
+    let slot = match name {
+        "current" => Slot::Claude,
+        "codex" => Slot::Codex,
+        _ => return Err(ImportError::Io),
+    };
     // Checked where it is first: nothing is copied from a folder that isn't an export.
-    read_export(src)?;
-    let tmp = dest_root.join("current.tmp");
-    let current = dest_root.join("current");
+    read_export(src, slot)?;
+    let tmp = dest_root.join(format!("{name}.tmp"));
+    let current = dest_root.join(name);
     let _ = std::fs::remove_dir_all(&tmp);
     if copy_tree(src, &tmp).is_err() {
         let _ = std::fs::remove_dir_all(&tmp);
         return Err(ImportError::Io);
     }
-    if let Err(e) = read_export(&tmp) {
+    if let Err(e) = read_export(&tmp, slot) {
         let _ = std::fs::remove_dir_all(&tmp);
         return Err(e);
     }
@@ -336,21 +377,29 @@ pub fn install(src: &Path, dest_root: &Path) -> Result<MascotInfo, ImportError> 
         return Err(ImportError::Io);
     }
     std::fs::rename(&tmp, &current).map_err(|_| ImportError::Io)?;
-    read_export(&current)
+    read_export(&current, slot)
 }
 
-fn announce(app: &AppHandle, info: &Option<MascotInfo>) {
-    let _ = app.emit("mascot-changed", info.clone());
+#[derive(Serialize, Clone)]
+struct MascotChanged {
+    slot: String,
+    info: Option<MascotInfo>,
+}
+
+fn announce(app: &AppHandle, slot: Slot, info: &Option<MascotInfo>) {
+    let event = MascotChanged { slot: slot.name().to_string(), info: info.clone() };
+    let _ = app.emit("mascot-changed", event);
 }
 
 /// Settings → Choose a MascotForge folder. Off the main thread: a copy must
 /// not freeze the island while an approval waits.
 #[tauri::command(async)]
-pub fn mascot_import(app: AppHandle, folder: String) -> Result<MascotInfo, String> {
+pub fn mascot_import(app: AppHandle, folder: String, slot: String) -> Result<MascotInfo, String> {
+    let slot = Slot::parse(&slot).ok_or_else(|| "bad_slot".to_string())?;
     let src = find_export(Path::new(&folder)).ok_or_else(|| ImportError::NotAnExport.code().to_string())?;
-    match install(&src, &mascots_dir()) {
+    match install(&src, &mascots_dir(), slot.folder()) {
         Ok(info) => {
-            announce(&app, &Some(info.clone()));
+            announce(&app, slot, &Some(info.clone()));
             Ok(info)
         }
         Err(ImportError::MissingFile(file)) => Err(format!("missing_file:{file}")),
@@ -360,15 +409,17 @@ pub fn mascot_import(app: AppHandle, folder: String) -> Result<MascotInfo, Strin
 
 /// The active mascot, if any.
 #[tauri::command]
-pub fn mascot_current() -> Option<MascotInfo> {
-    read_export(&current_dir()).ok()
+pub fn mascot_current(slot: String) -> Option<MascotInfo> {
+    let slot = Slot::parse(&slot)?;
+    read_export(&slot_dir(slot), slot).ok()
 }
 
 /// Settings → Back to Mochi.
 #[tauri::command]
-pub fn mascot_clear(app: AppHandle) {
-    let _ = std::fs::remove_dir_all(current_dir());
-    announce(&app, &None);
+pub fn mascot_clear(app: AppHandle, slot: String) {
+    let Some(slot) = Slot::parse(&slot) else { return };
+    let _ = std::fs::remove_dir_all(slot_dir(slot));
+    announce(&app, slot, &None);
 }
 
 #[cfg(test)]
@@ -461,7 +512,7 @@ mod tests {
     fn a_blob_export_reads_its_engine_and_states() {
         let dir = scratch("blob");
         blob_export(&dir);
-        let info = read_export(&dir).unwrap();
+        let info = read_export(&dir, Slot::Claude).unwrap();
         assert_eq!(info.name, "nuage");
         assert_eq!(info.engine, "blob");
         assert_eq!(info.states.len(), 8);
@@ -469,7 +520,7 @@ mod tests {
         assert_eq!(info.credit.as_deref(), Some("Blob Atelier"));
         assert!(info.manifest_path.ends_with("manifest.json"));
         assert!(info.script_path.ends_with("mascot.js"));
-        assert_eq!(info.base_url, BASE_URL);
+        assert_eq!(info.base_url, format!("{BASE_URL}claude/"));
     }
 
     #[test]
@@ -482,7 +533,7 @@ mod tests {
         );
         write(&dir.join("mascot.js"), "// component");
         write(&dir.join("videos/idle.mp4"), "mp4");
-        let info = read_export(&dir).unwrap();
+        let info = read_export(&dir, Slot::Claude).unwrap();
         assert_eq!(info.engine, "video");
         assert_eq!(info.alpha, "none");
         assert_eq!(info.credit, None);
@@ -497,7 +548,7 @@ mod tests {
                "states":{"idle":{"src":"videos/idle.mp4","loop":true}}}"#,
         );
         write(&dir.join("mascot.js"), "// component");
-        assert_eq!(read_export(&dir), Err(ImportError::MissingFile("videos/idle.mp4".into())));
+        assert_eq!(read_export(&dir, Slot::Claude), Err(ImportError::MissingFile("videos/idle.mp4".into())));
     }
 
     #[test]
@@ -505,7 +556,7 @@ mod tests {
         let dir = scratch("v1");
         write(&dir.join("manifest.json"), r#"{"version":1,"name":"old","states":{}}"#);
         write(&dir.join("mascot.js"), "// component");
-        assert_eq!(read_export(&dir), Err(ImportError::WrongVersion));
+        assert_eq!(read_export(&dir, Slot::Claude), Err(ImportError::WrongVersion));
     }
 
     #[test]
@@ -513,7 +564,7 @@ mod tests {
         let dir = scratch("broken");
         write(&dir.join("manifest.json"), "{ not json");
         write(&dir.join("mascot.js"), "// component");
-        assert_eq!(read_export(&dir), Err(ImportError::BadManifest));
+        assert_eq!(read_export(&dir, Slot::Claude), Err(ImportError::BadManifest));
     }
 
     #[test]
@@ -525,7 +576,7 @@ mod tests {
         );
         write(&dir.join("mascot.js"), "// component");
         write(&dir.parent().unwrap().join("outside.js"), "// sneaky");
-        assert_eq!(read_export(&dir), Err(ImportError::MissingFile("../outside.js".into())));
+        assert_eq!(read_export(&dir, Slot::Claude), Err(ImportError::MissingFile("../outside.js".into())));
     }
 
     #[test]
@@ -533,7 +584,7 @@ mod tests {
         let root = scratch("install-root");
         let src = scratch("install-src");
         blob_export(&src);
-        let info = install(&src, &root).unwrap();
+        let info = install(&src, &root, "current").unwrap();
         assert_eq!(info.name, "nuage");
         assert!(root.join("current/engines/agent-mascot.js").is_file());
         assert!(info.manifest_path.starts_with(&*root.join("current").to_string_lossy()));
@@ -605,7 +656,7 @@ mod tests {
         let dir = scratch("pwa");
         write(&dir.join("manifest.json"), r#"{"name":"My PWA","icons":[]}"#);
         write(&dir.join("mascot.js"), "// not ours");
-        assert_eq!(read_export(&dir), Err(ImportError::NotAnExport));
+        assert_eq!(read_export(&dir, Slot::Claude), Err(ImportError::NotAnExport));
     }
 
     #[test]
@@ -660,13 +711,13 @@ mod tests {
         let root = scratch("keep-root");
         let good = scratch("keep-good");
         blob_export(&good);
-        install(&good, &root).unwrap();
+        install(&good, &root, "current").unwrap();
         let before = fs::read_to_string(root.join("current/manifest.json")).unwrap();
 
         let bad = scratch("keep-bad");
         write(&bad.join("manifest.json"), r#"{"version":1,"name":"old","states":{}}"#);
         write(&bad.join("mascot.js"), "// component");
-        assert_eq!(install(&bad, &root), Err(ImportError::WrongVersion));
+        assert_eq!(install(&bad, &root, "current"), Err(ImportError::WrongVersion));
         assert_eq!(fs::read_to_string(root.join("current/manifest.json")).unwrap(), before);
     }
 }
