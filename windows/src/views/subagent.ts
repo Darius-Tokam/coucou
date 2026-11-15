@@ -2,7 +2,8 @@ import type { BotStateName } from "../core/layout";
 import { State } from "../core/state";
 import { t, tl } from "../i18n/i18n";
 import { agentMascots, colorForType, type AgentMascot } from "../mascot/agents";
-import { clear, h } from "./dom";
+import { clear, h, svg } from "./dom";
+import { ICONS } from "./icons";
 import { subagentCard } from "./subagent-card";
 import type { ViewActions, ViewHost } from "./views";
 
@@ -28,12 +29,24 @@ function stateLabel(state: BotStateName): string {
   }
 }
 
-export function buildSubagent(actions: Pick<ViewActions, "openPill">): ViewHost {
+export function buildSubagent(
+  actions: Pick<ViewActions, "collapse" | "openPill">,
+  onHeightChange: (height: number) => void,
+): ViewHost {
   const body = h("div", { class: "stack subagent-card" });
-  const el = h("div", { class: "view" }, h("div", { class: "card" }, body));
+  const panel = h("div", { class: "card subagent-panel-card" }, body);
+  const el = h("div", { class: "view subagent-view" }, panel);
   let shownKey: string | null = null;
   let snapshot: AgentMascot | null = null;
   let rendered = "";
+
+  const reportHeight = () => {
+    const height = Math.ceil(panel.scrollHeight);
+    if (height > 0) onHeightChange(height);
+  };
+  if (typeof ResizeObserver !== "undefined") {
+    new ResizeObserver(reportHeight).observe(panel);
+  }
 
   return {
     el,
@@ -56,7 +69,10 @@ export function buildSubagent(actions: Pick<ViewActions, "openPill">): ViewHost 
         : "#9398a1";
       const card = subagentCard(snapshot, color);
       const renderKey = JSON.stringify(card);
-      if (renderKey === rendered) return;
+      if (renderKey === rendered) {
+        reportHeight();
+        return;
+      }
       rendered = renderKey;
       clear(body);
       const title = h(
@@ -65,6 +81,17 @@ export function buildSubagent(actions: Pick<ViewActions, "openPill">): ViewHost 
         h("i", { class: "mini-dot", style: `background:${card.color}` }),
         h("span", { class: "title", text: card.title }),
         h("span", { class: "sub", text: `${card.project} · ${stateLabel(card.state)}` }),
+        h(
+          "button",
+          {
+            class: "subagent-close",
+            type: "button",
+            title: tl("Close"),
+            "aria-label": tl("Close"),
+            onclick: () => actions.collapse(),
+          },
+          svg(ICONS.xmark, 13),
+        ),
       );
       const steps = h("div", { class: "subagent-steps" });
       for (const step of card.steps) steps.append(h("div", { class: "sub", text: step }));
@@ -82,6 +109,7 @@ export function buildSubagent(actions: Pick<ViewActions, "openPill">): ViewHost 
         h("span", { text: tl("Open session") }),
       );
       body.append(title, steps, answer, h("div", { class: "actions" }, session));
+      reportHeight();
     },
   };
 }

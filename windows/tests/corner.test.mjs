@@ -3,7 +3,10 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { CORNER_HOVER_CLOSE_S, clampMascotSize, cornerRects, miniScreenRect, placeInPanel } from "../src/island/corner.ts";
+import {
+  CORNER_HOVER_CLOSE_S, clampMascotSize, cornerRects, mascotClickAction, miniScreenRect,
+  placeInPanel, subagentClickAction, subagentPanelPlacement,
+} from "../src/island/corner.ts";
 
 // Mascot bottom-right of the screen: the panel area is on its left, bottom-aligned.
 const BOTTOM_RIGHT = {
@@ -49,6 +52,55 @@ test("the clicked mini becomes a physical screen anchor", () => {
 
   assert.deepEqual(miniScreenRect(layout, 0), { x: 130, y: 245, w: 135, h: 135 });
   assert.equal(miniScreenRect(layout, 1), null);
+});
+
+test("the small subagent card points at its mini from above", () => {
+  const layout = {
+    window: { x: 100, y: 200, w: 900, h: 700 },
+    mascot: { x: 700, y: 460, w: 200, h: 200 },
+    panel: { x: 10, y: 20, w: 320, h: 300 },
+    minis: [],
+    scale: 1,
+  };
+  const anchor = { x: 120, y: 528, w: 90, h: 90 };
+
+  assert.deepEqual(subagentPanelPlacement(layout, anchor, 180), {
+    rect: { x: 10, y: 140, w: 320, h: 180 },
+    pointerSide: "bottom",
+    pointerX: 55,
+  });
+});
+
+test("the small subagent card points at its mini from below", () => {
+  const layout = {
+    window: { x: 0, y: 0, w: 900, h: 700 },
+    mascot: { x: 700, y: 460, w: 200, h: 200 },
+    panel: { x: 0, y: 228, w: 320, h: 300 },
+    minis: [],
+    scale: 1,
+  };
+  const anchor = { x: 0, y: 100, w: 90, h: 90 };
+
+  assert.deepEqual(subagentPanelPlacement(layout, anchor, 180), {
+    rect: { x: 0, y: 228, w: 320, h: 180 },
+    pointerSide: "top",
+    pointerX: 45,
+  });
+});
+
+test("clicking the open subagent mini closes its small card", () => {
+  assert.equal(subagentClickAction("claude:s1:a1", "claude:s1:a1", true), "close");
+  assert.equal(subagentClickAction("claude:s1:a1", "claude:s1:a2", true), "open");
+  assert.equal(subagentClickAction("claude:s1:a1", "claude:s1:a1", false), "open");
+});
+
+test("the big mascot replaces a small subagent card with the big panel", () => {
+  assert.equal(mascotClickAction({
+    open: true,
+    pinned: true,
+    approvalWaits: false,
+    subagentCard: true,
+  }), "panel");
 });
 
 test("the corner closes faster than the top island", () => {

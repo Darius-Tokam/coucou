@@ -17,6 +17,8 @@ use crate::platform::{self, cursor_physical, left_button_down};
 /// Logical size of the full window — the largest island view, like the macOS panel.
 pub const PANEL_W: f64 = 720.0;
 pub const PANEL_H: f64 = 320.0;
+pub const SUBAGENT_PANEL_W: f64 = 320.0;
+pub const SUBAGENT_PANEL_MAX_H: f64 = 300.0;
 /// Logical size of the invisible strip that wakes the island when it is hidden
 /// and the closed island is set to show nothing.
 pub const STRIP_W: f64 = 240.0;
@@ -161,6 +163,9 @@ pub fn corner_layout(
     mascot_size: f64,
     panel_anchor: Option<IslandRect>,
 ) -> CornerLayout {
+    let panel = panel.map(|size| {
+        if panel_anchor.is_some() { (SUBAGENT_PANEL_W, SUBAGENT_PANEL_MAX_H) } else { size }
+    });
     let size = mascot_size * scale;
     let margin = CORNER_MARGIN * scale;
     let (right, bottom) = (work.x + work.w, work.y + work.h);
@@ -346,22 +351,22 @@ pub fn corner_layout(
 
         let Some(anchor) = panel_anchor else { return placed };
         placed.x = (anchor.x + anchor.w / 2.0 - pw / 2.0).min(right - pw).max(work.x);
-        let queued_anchor = queued.iter().any(|&index| {
-            let mini = mini_rects[index];
-            (mini.x - anchor.x).abs() < 0.5
-                && (mini.y - anchor.y).abs() < 0.5
-                && (mini.w - anchor.w).abs() < 0.5
-                && (mini.h - anchor.h).abs() < 0.5
-        });
-        if !queued_anchor {
-            placed.y = if anchor.y + anchor.h / 2.0 >= work.y + work.h / 2.0 {
-                anchor.y - gap - ph
-            } else {
-                anchor.y + anchor.h + gap
-            }
-            .min(bottom - ph)
-            .max(work.y);
-        }
+        let above = anchor.y - gap - ph;
+        let below = anchor.y + anchor.h + gap;
+        let above_fits = fits(above);
+        let below_fits = fits(below);
+        let prefer_below = anchor.y + anchor.h / 2.0 < work.y + work.h / 2.0 || !above_fits;
+        placed.y = if prefer_below && below_fits {
+            below
+        } else if !prefer_below && above_fits {
+            above
+        } else if below_fits {
+            below
+        } else if above_fits {
+            above
+        } else {
+            (if prefer_below { below } else { above }).min(bottom - ph).max(work.y)
+        };
         placed
     });
 
@@ -884,7 +889,7 @@ pub fn corner_mode(app: &AppHandle) -> Option<Option<(f64, f64)>> {
     (settings.island_anchor == "corner").then(|| settings.corner_pos.map(|p| (p.x, p.y)))
 }
 
-/// Corner mode: the mascot alone, or the mascot and the panel beside it.
+/// Corner mode: the mascot alone, with the main panel, or with an anchored subagent card.
 /// The page hears where each sits through `corner-layout`.
 fn apply_corner(win: &WebviewWindow, m: &Monitor, corner_pos: Option<(f64, f64)>, open: bool) {
     // The screen the mascot was dropped on, whichever that is.
@@ -902,15 +907,21 @@ fn apply_corner(win: &WebviewWindow, m: &Monitor, corner_pos: Option<(f64, f64)>
         .try_state::<crate::Shared>()
         .map(|shared| shared.settings.lock().unwrap().mascot_size)
         .unwrap_or(MASCOT_SIZE);
+    let panel_anchor = *CORNER_PANEL_ANCHOR.lock().unwrap();
+    let panel_size = if panel_anchor.is_some() {
+        (SUBAGENT_PANEL_W, SUBAGENT_PANEL_MAX_H)
+    } else {
+        (PANEL_W, PANEL_H)
+    };
     let layout = corner_layout(
         work,
         scale,
         corner_pos,
-        open.then_some((PANEL_W, PANEL_H)),
+        open.then_some(panel_size),
         &minis,
         CORNER_MINI_DRAG.load(Ordering::Relaxed),
         mascot_size,
-        *CORNER_PANEL_ANCHOR.lock().unwrap(),
+        panel_anchor,
     );
     remember_mascot_offset(&layout, scale);
     let mut held_rects: Vec<IslandRect> = layout.panel.into_iter().collect();
@@ -1364,7 +1375,7 @@ mod corner_tests {
     }
 
     #[test]
-    fn a_subagent_card_opens_above_the_line_centred_on_its_mascot() {
+    fn an_anchored_subagent_panel_is_small() {
         let anchor = rect(1280.0, 904.0, 120.0, 120.0);
         let layout = corner_layout(
             WORK,
@@ -1377,28 +1388,104 @@ mod corner_tests {
             Some(anchor),
         );
 
-        assert_eq!(on_screen(layout.window, layout.panel.unwrap()), rect(980.0, 456.0, 720.0, 320.0));
+        let panel = on_screen(layout.window, layout.panel.unwrap());
+        assert_eq!((panel.w, panel.h), (320.0, 300.0));
+    }
+
+    #[test]
+    fn a_queued_subagent_panel_sits_above_its_mini() {
+        let anchor = rect(1280.0, 904.0, 120.0, 120.0);
+        let layout = corner_layout(
+            WORK,
+            1.0,
+            None,
+            Some((320.0, 300.0)),
+            &[MiniSlot { size: 120.0, at: None }; 3],
+            false,
+            240.0,
+            Some(anchor),
+        );
+
+        let panel = on_screen(layout.window, layout.panel.unwrap());
+        assert_eq!(panel, rect(1180.0, 596.0, 320.0, 300.0));
+        assert_eq!(anchor.y - (panel.y + panel.h), 8.0);
         assert_eq!(on_screen(layout.window, layout.mascot), rect(1664.0, 784.0, 240.0, 240.0));
         assert_eq!(on_screen(layout.window, layout.minis[2]), anchor);
     }
 
     #[test]
-    fn a_subagent_card_opens_below_a_placed_mascot_near_the_top() {
+    fn a_placed_subagent_panel_sits_above_its_mini() {
+        let anchor = rect(500.0, 800.0, 90.0, 90.0);
+        let layout = corner_layout(
+            WORK,
+            1.0,
+            None,
+            Some((320.0, 300.0)),
+            &[MiniSlot { size: 90.0, at: Some((500.0, 800.0)) }],
+            false,
+            240.0,
+            Some(anchor),
+        );
+
+        let panel = on_screen(layout.window, layout.panel.unwrap());
+        assert_eq!(panel, rect(385.0, 492.0, 320.0, 300.0));
+        assert_eq!(anchor.y - (panel.y + panel.h), 8.0);
+        assert_eq!(on_screen(layout.window, layout.minis[0]), anchor);
+    }
+
+    #[test]
+    fn a_subagent_panel_opens_below_a_mini_near_the_top() {
         let anchor = rect(100.0, 100.0, 120.0, 120.0);
         let layout = corner_layout(
             WORK,
             1.0,
             None,
-            Some((720.0, 320.0)),
+            Some((320.0, 300.0)),
             &[MiniSlot { size: 120.0, at: Some((100.0, 100.0)) }],
             false,
             240.0,
             Some(anchor),
         );
 
-        assert_eq!(on_screen(layout.window, layout.panel.unwrap()), rect(0.0, 228.0, 720.0, 320.0));
+        assert_eq!(on_screen(layout.window, layout.panel.unwrap()), rect(0.0, 228.0, 320.0, 300.0));
         assert_eq!(on_screen(layout.window, layout.mascot), rect(1664.0, 784.0, 240.0, 240.0));
         assert_eq!(on_screen(layout.window, layout.minis[0]), anchor);
+    }
+
+    #[test]
+    fn a_subagent_panel_stays_on_screen_at_an_edge() {
+        let anchor = rect(1800.0, 200.0, 120.0, 120.0);
+        let layout = corner_layout(
+            WORK,
+            1.0,
+            None,
+            Some((320.0, 300.0)),
+            &[MiniSlot { size: 120.0, at: Some((1800.0, 200.0)) }],
+            false,
+            240.0,
+            Some(anchor),
+        );
+
+        let panel = on_screen(layout.window, layout.panel.unwrap());
+        assert_eq!(panel, rect(1600.0, 328.0, 320.0, 300.0));
+        assert!(inside(WORK, panel));
+        assert!(!overlaps(panel, anchor));
+    }
+
+    #[test]
+    fn no_anchor_keeps_the_large_panel_size_and_place() {
+        let layout = corner_layout(
+            WORK,
+            1.0,
+            None,
+            Some((720.0, 320.0)),
+            &[],
+            false,
+            240.0,
+            None,
+        );
+
+        assert_eq!(on_screen(layout.window, layout.panel.unwrap()), rect(944.0, 704.0, 720.0, 320.0));
     }
 
     #[test]

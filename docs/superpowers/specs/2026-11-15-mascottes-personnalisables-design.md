@@ -79,11 +79,18 @@ Les petites mascottes existent, mais toutes les mascottes de sous-agents se ress
 - Les étapes sont gardées dans le modèle des mascottes (`agents.ts`), par sous-agent, 50 au plus, et partent avec lui.
 - Une autorisation demandée par ce sous-agent garde la priorité : si elle attend, le clic montre la carte d'autorisation, comme aujourd'hui.
 - Un clic sur la mascotte d'une session ouvre toujours l'onglet de sa session.
-- **Le panneau de la fiche s'ouvre à côté de la petite mascotte cliquée** (choix de Darius, option 1 du 2026-11-15), pas à côté de la grande. C'est le même panneau, déplacé :
-  - petite mascotte dans la file : le panneau reste au-dessus (ou en dessous) du groupe grande mascotte + file, comme aujourd'hui, mais centré horizontalement sur la petite mascotte, et ramené dans la zone de travail ;
-  - petite mascotte posée ailleurs : le panneau s'ouvre juste au-dessus d'elle si elle est dans la moitié basse de l'écran, juste en dessous sinon, à 8 px, centré sur elle, ramené dans la zone de travail, sans la couvrir.
-  - Si le sous-agent part pendant que sa fiche est ouverte, le panneau reste où il est jusqu'à sa fermeture.
-  - Toutes les autres vues gardent le placement actuel, à côté de la grande mascotte.
+
+### Petit panneau du sous-agent
+
+- Un clic sur une petite mascotte de sous-agent ouvre sa fiche dans une carte dédiée de 320 px de large. Cette carte n'affiche ni l'en-tête ni les onglets du grand panneau.
+- Rust réserve une zone d'au plus 320 x 300 px. La page mesure le contenu et réduit la hauteur réelle de la carte dans cette zone. La liste des étapes défile si elle atteint la hauteur maximale ; la réponse finale tient sur quatre lignes au plus.
+- La carte est centrée horizontalement sur la petite mascotte et séparée d'elle par `MINI_GAP`. Elle s'ouvre au-dessus dans la moitié basse de la zone de travail, et en dessous dans la moitié haute ou quand elle ne tient pas au-dessus. Elle reste entièrement dans la zone de travail.
+- Une pointe sur le bord supérieur ou inférieur vise le centre de la petite mascotte. Près d'un bord d'écran, la carte se décale tandis que la pointe reste face à la mascotte.
+- La règle vaut pour une mascotte dans la file et une mascotte posée librement. La carte passe devant les autres petites mascottes et peut les recouvrir.
+- Cliquer une autre petite mascotte déplace la carte et remplace son contenu. Recliquer la même petite mascotte ferme la carte.
+- Si le sous-agent part pendant que sa fiche est ouverte, la copie de ses données et l'ancre restent jusqu'à la fermeture.
+- Un clic sur la grande mascotte efface l'ancre et ouvre le grand panneau de 720 x 320 px avec son en-tête et ses onglets. Toutes les autres vues gardent ce grand panneau.
+- Hors mode coin, la fiche garde son comportement actuel dans le grand panneau.
 
 ### Galerie des mascottes (demande de Darius, 2026-11-15)
 

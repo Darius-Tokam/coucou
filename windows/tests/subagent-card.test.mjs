@@ -17,13 +17,13 @@ const subagent = {
   parentKey: "claude:s1",
 };
 
-test("the card shows the last six steps and the answer", () => {
+test("the card keeps every step for its scrolling list and the answer", () => {
   assert.deepEqual(subagentCard(subagent, "#123456"), {
     title: "Explore",
     color: "#123456",
     state: "finished",
     project: "Coucou",
-    steps: ["two", "three", "four", "five", "six", "seven"],
+    steps: ["one", "two", "three", "four", "five", "six", "seven"],
     finalText: "The answer is ready.",
   });
 });

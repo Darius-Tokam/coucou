@@ -864,6 +864,7 @@ function buildPlaceholder(title: Msg, sub: string): ViewHost {
 export function buildViews(
   actions: ViewActions,
   onChatHeightChange: () => void,
+  onSubagentHeightChange: (height: number) => void,
 ): Map<IslandViewName, ViewHost> {
   const map = new Map<IslandViewName, ViewHost>();
   map.set("overview", buildOverview(actions));
@@ -884,7 +885,7 @@ export function buildViews(
   map.set("update", buildUpdate());
   map.set("whatsNew", buildWhatsNew());
   map.set("launch", buildLaunch(actions));
-  map.set("subagent", buildSubagent(actions));
+  map.set("subagent", buildSubagent(actions, onSubagentHeightChange));
   // Not in the Windows v1: sending a file by email, window attach + web result.
   map.set("mail", buildPlaceholder(tl("Sending by email isn't in this version."), ""));
   map.set("searching", buildPlaceholder(tl("Claude is searching…"), ""));

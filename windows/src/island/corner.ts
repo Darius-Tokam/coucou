@@ -13,7 +13,7 @@ export const CORNER_SUPPORTED =
   typeof navigator !== "undefined" && /Windows/.test(navigator.userAgent ?? "");
 
 /** What a click on the corner mascot does. */
-export type MascotClick = "open" | "pin" | "close" | "none";
+export type MascotClick = "open" | "pin" | "close" | "panel" | "none";
 
 /** Two clicks closer than this are a double click (Windows' default is 500 ms). */
 export const DOUBLE_CLICK_MS = 500;
@@ -28,13 +28,23 @@ export function mascotClickAction(s: {
   open: boolean;
   pinned: boolean;
   approvalWaits: boolean;
+  subagentCard?: boolean;
   /** Since the click that opened the card; unknown counts as long ago. */
   sinceOpenMs?: number;
 }): MascotClick {
+  if (s.subagentCard && !s.approvalWaits) return "panel";
   if (!s.open) return "open";
   if (!s.pinned) return "pin";
   if (s.approvalWaits || (s.sinceOpenMs ?? Infinity) < DOUBLE_CLICK_MS) return "none";
   return "close";
+}
+
+export function subagentClickAction(
+  openKey: string | null,
+  clickedKey: string,
+  smallPanel: boolean,
+): "open" | "close" {
+  return smallPanel && openKey === clickedKey ? "close" : "open";
 }
 
 export function miniClickAction(s: {
@@ -112,6 +122,34 @@ export function miniScreenRect(layout: CornerLayout, index: number): Rect | null
     w: mini.w * layout.scale,
     h: mini.h * layout.scale,
   };
+}
+
+export interface SubagentPanelPlacement {
+  rect: Rect;
+  pointerSide: "top" | "bottom";
+  pointerX: number;
+}
+
+/** Places the content-sized card inside Rust's anchored maximum panel area. */
+export function subagentPanelPlacement(
+  layout: CornerLayout,
+  anchor: Rect,
+  height: number,
+): SubagentPanelPlacement | null {
+  const panel = layout.panel;
+  if (!panel) return null;
+  const h = Math.min(panel.h, Math.max(0, height));
+  const panelBottom = layout.window.y + (panel.y + panel.h) * layout.scale;
+  const pointerSide = panelBottom <= anchor.y + 0.5 ? "bottom" : "top";
+  const rect = {
+    x: panel.x,
+    y: pointerSide === "bottom" ? panel.y + panel.h - h : panel.y,
+    w: panel.w,
+    h,
+  };
+  const anchorCenter = (anchor.x + anchor.w / 2.0 - layout.window.x) / layout.scale;
+  const pointerX = Math.min(rect.w - 18, Math.max(18, anchorCenter - rect.x));
+  return { rect, pointerSide, pointerX };
 }
 
 /**

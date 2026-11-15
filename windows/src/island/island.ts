@@ -2,7 +2,7 @@
 // Mirrors IslandRootView.swift + IslandWindowController.swift.
 
 import { Tracked, Spring, clamp } from "../core/anim";
-import { Bridge, IS_TAURI, onDragDrop, type CornerLayout, type DragDropPayload } from "../core/bridge";
+import { Bridge, IS_TAURI, onDragDrop, type CornerLayout, type DragDropPayload, type Rect } from "../core/bridge";
 import {
   CLOSED_BOT_D, CLOSED_H, closedContent, closedIsland, closedWidth, type ClosedContent,
 } from "../core/closed";
@@ -35,7 +35,8 @@ import { restoreAlertFocus } from "./hooks";
 import { DesktopLink } from "./desktop";
 import {
   CORNER_HOVER_CLOSE_S, CORNER_SUPPORTED, HoverStart, MASCOT_SIZE, clampMascotSize, cornerRects,
-  mascotClickAction, miniClickTarget, miniScreenRect, placeInPanel,
+  mascotClickAction, miniClickTarget, miniScreenRect, placeInPanel, subagentClickAction,
+  subagentPanelPlacement,
 } from "./corner";
 import { CornerView } from "./corner-view";
 import { cornerAgentState } from "../mascot/states";
@@ -51,8 +52,18 @@ import { UPDATE_BLUE, showsUpdateHint } from "../whats-new/whats-new";
 const BOT_OVERHANG = 40;
 const UPDATE_BLUE_RGB = hexToRGB(UPDATE_BLUE);
 const CLAUDE_DESKTOP_ID = "agent_claude-desktop";
+const SUBAGENT_PANEL_W = 320;
+const SUBAGENT_PANEL_MIN_H = 140;
+const SUBAGENT_PANEL_FALLBACK_MAX_H = 300;
 /** Extra canvas on each side of Mochi, for the witch hat's brim and the Santa hat's tip. */
 const BOT_SIDE = 24;
+
+function sameRect(a: Rect, b: Rect): boolean {
+  return Math.abs(a.x - b.x) < 0.5
+    && Math.abs(a.y - b.y) < 0.5
+    && Math.abs(a.w - b.w) < 0.5
+    && Math.abs(a.h - b.h) < 0.5;
+}
 /** Same margin as the Rust hit test (src-tauri/src/island.rs). */
 const HIT_MARGIN = 14;
 
@@ -150,6 +161,9 @@ export class Island {
   private pushedRects = "";
   /** Corner mode: one hover per stay of the pointer on the folded mascot. */
   private cornerHover = new HoverStart();
+  /** Physical screen rectangle of the mini that owns the open small card. */
+  private subagentAnchor: Rect | null = null;
+  private subagentPanelHeight = 200;
   /** When a click on the corner mascot last opened or pinned the card (ms). */
   private cornerOpenedAt = -Infinity;
   /** The top island's hover close delay, put back when leaving corner mode. */
@@ -387,7 +401,11 @@ export class Island {
     );
 
     this.header = buildHeader(actions);
-    this.views = buildViews(actions, () => this.animateGeometry(false));
+    this.views = buildViews(
+      actions,
+      () => this.animateGeometry(false),
+      (height) => this.setSubagentPanelHeight(height),
+    );
     this.viewsEl = h("div", { id: "views" });
     for (const v of this.views.values()) this.viewsEl.append(v.el);
     this.contentEl = h("div", { id: "content" }, this.header.el, this.viewsEl);
@@ -934,12 +952,24 @@ export class Island {
     if (State.mode === "hidden" && this.closedShows) {
       return { w: this.closedW, h: CLOSED_H, r: 10 };
     }
+    if (State.mode === "expanded" && this.smallSubagentPanel) {
+      return { w: SUBAGENT_PANEL_W, h: this.subagentPanelHeight, r: 18 };
+    }
     let { w, h } = islandSize(State.mode, State.view, State.chatHistory.length);
     if (State.mode === "expanded" && State.view === "question" && State.pendingApproval?.questions) {
       h = QUESTION_PICKER_H;
     }
     const r = State.mode === "expanded" ? EXPANDED_CORNER : ROUNDED_CORNER;
     return { w, h, r };
+  }
+
+  private setSubagentPanelHeight(height: number) {
+    const max = this.cornerLayout?.panel?.h ?? SUBAGENT_PANEL_FALLBACK_MAX_H;
+    const next = Math.min(max, Math.max(SUBAGENT_PANEL_MIN_H, Math.ceil(height)));
+    if (next === this.subagentPanelHeight) return;
+    const shrinking = next < this.subagentPanelHeight;
+    this.subagentPanelHeight = next;
+    if (this.smallSubagentPanel) this.animateGeometry(shrinking);
   }
 
   private animateGeometry(shrinking: boolean) {
@@ -994,7 +1024,15 @@ export class Island {
 
   /** Corner mode: the card beside the mascot, shown only while open; Rust hears what takes the mouse. */
   private applyCornerGeometry() {
-    const card = State.mode === "expanded" && this.cornerLayout ? this.islandRect() : null;
+    const placement = this.subagentPlacement();
+    const small = placement != null;
+    this.islandEl.classList.toggle("subagent-popover", small);
+    this.islandEl.classList.toggle("pointer-top", placement?.pointerSide === "top");
+    this.islandEl.classList.toggle("pointer-bottom", placement?.pointerSide === "bottom");
+    if (placement) this.islandEl.style.setProperty("--subagent-pointer-x", `${placement.pointerX}px`);
+    const card = State.mode === "expanded" && this.cornerLayout
+      ? placement?.rect ?? this.islandRect()
+      : null;
     const shown = card != null && card.w > 0;
     this.islandEl.style.left = `${card?.x ?? 0}px`;
     this.islandEl.style.top = `${card?.y ?? 0}px`;
@@ -1013,15 +1051,35 @@ export class Island {
     this.cornerLayout = layout;
     this.corner.setLayout(layout);
     if (this.cornerMode) {
-      this.minis.render(displayed(agentMascots.list, State.settings.miniDisplay), layout);
+      const visible = displayed(agentMascots.list, State.settings.miniDisplay);
+      this.minis.render(visible, layout);
+      if (State.subagentKey != null && this.subagentAnchor != null) {
+        const index = visible.findIndex((mascot) => mascot.key === State.subagentKey);
+        const anchor = index >= 0 ? miniScreenRect(layout, index) : null;
+        if (anchor && !sameRect(anchor, this.subagentAnchor)) {
+          this.subagentAnchor = anchor;
+          void Bridge.cornerPanelAnchor(anchor);
+        }
+      }
     }
     this.applyGeometry();
+    if (this.smallSubagentPanel) this.views.get("subagent")?.sync();
     this.ensureRunning();
   }
 
   /** Settings → Where Coucou lives → In a corner of the screen. */
   private get cornerMode(): boolean {
     return CORNER_SUPPORTED && State.settings.islandAnchor === "corner";
+  }
+
+  private get smallSubagentPanel(): boolean {
+    return this.cornerMode && State.view === "subagent" && State.subagentKey != null && this.subagentAnchor != null;
+  }
+
+  private subagentPlacement() {
+    if (!this.smallSubagentPanel || !this.cornerLayout || !this.subagentAnchor) return null;
+    if (Math.abs((this.cornerLayout.panel?.w ?? 0) - SUBAGENT_PANEL_W) >= 0.5) return null;
+    return subagentPanelPlacement(this.cornerLayout, this.subagentAnchor, this.height.value);
   }
 
   /** Corner mode folds the window to the mascot whenever the card isn't open. */
@@ -1038,9 +1096,19 @@ export class Island {
       open: State.mode === "expanded",
       pinned: this.fsm.pinned,
       approvalWaits: State.pendingApproval != null,
+      subagentCard: this.smallSubagentPanel,
       sinceOpenMs: now - this.cornerOpenedAt,
     });
     if (action === "none") return;
+    if (action === "panel") {
+      this.closeSubagent();
+      this.cornerOpenedAt = now;
+      this.fsm.pinned = true;
+      State.isPinned = true;
+      this.fsm.forceHome();
+      this.expand(State.defaultView());
+      return;
+    }
     if (action === "close") {
       this.collapse();
       return;
@@ -1081,6 +1149,10 @@ export class Island {
       this.expand(State.defaultView());
       return;
     }
+    if (subagentClickAction(State.subagentKey, key, this.cornerMode) === "close") {
+      this.collapse();
+      return;
+    }
     // Opening goes through the default view (fsm "home" → expand), which
     // closes any subagent card: the key is set only once that has happened.
     const layout = this.cornerLayout;
@@ -1088,6 +1160,7 @@ export class Island {
       .findIndex((mascot) => mascot.key === key);
     const anchor = this.cornerMode && layout && index >= 0 ? miniScreenRect(layout, index) : null;
     this.fsm.forceHome();
+    this.subagentAnchor = anchor;
     void Bridge.cornerPanelAnchor(anchor);
     State.subagentKey = key;
     this.expand("subagent");
@@ -1096,15 +1169,18 @@ export class Island {
   private closeSubagent() {
     if (State.subagentKey == null) return;
     State.subagentKey = null;
+    this.subagentAnchor = null;
     void Bridge.cornerPanelAnchor(null);
     this.views?.get("subagent")?.sync();
   }
 
-  /** Island rect in window coordinates (origin top-left of the 720×320 window). */
+  /** Island rect in window coordinates, inside Rust's current panel area. */
   private islandRect(): { x: number; y: number; w: number; h: number } {
     const w = this.width.value;
     const hh = this.height.value;
     if (this.cornerMode) {
+      const placement = this.subagentPlacement();
+      if (placement) return placement.rect;
       return (this.cornerLayout && placeInPanel(this.cornerLayout, w, hh)) ?? { x: -10_000, y: -10_000, w: 0, h: 0 };
     }
     const viewportW = window.innerWidth > 0 ? window.innerWidth : PANEL_W;
@@ -1828,7 +1904,7 @@ export class Island {
 
   /** A MascotForge mascot is in the corner: the panel shows no Mochi. */
   private get mascotReplacesMochi(): boolean {
-    return this.cornerMode && this.corner.mascotActive;
+    return this.cornerMode && (this.corner.mascotActive || this.smallSubagentPanel);
   }
 
   /** The clock sits in the middle of the compact island, where the notch is on a Mac. */

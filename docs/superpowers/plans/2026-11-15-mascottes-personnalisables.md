@@ -149,6 +149,8 @@
 
 ### Task 10: Le panneau de la fiche s'ouvre à côté de la petite mascotte (ajout du 2026-11-15)
 
+> Remplacée par la tâche 12 : la fiche utilise maintenant un petit panneau dédié.
+
 **Files:** Modify `src-tauri/src/island.rs` (`corner_layout`, `apply_corner`, `corner_tests`), `src-tauri/src/lib.rs` (commande), `src/core/bridge.ts`, `src/island/island.ts` (`openSubagent`, `closeSubagent`).
 
 **Interfaces:**
@@ -173,3 +175,18 @@
 - [ ] **Step 2: Tests TS** : `at most twelve thumbnails load at once` (fonction pure de sélection des vignettes à charger) ; `the active export is marked per role`. Rouge puis vert en local.
 - [ ] **Step 3:** Implémenter ; i18n 13 langues ; CI verte.
 - [ ] **Step 4: Vérification dans l'app** : choisir `text-to-mascot\exports` comme dossier ; capture de la galerie ; appliquer un export à Codex en un clic ; mesure processeur avec la galerie ouverte.
+
+### Task 12: Petit panneau propre à chaque sous-agent (ajout du 2026-11-15)
+
+**Files:** Modify `src-tauri/src/island.rs` (`corner_layout`, `apply_corner`, `corner_tests`), `src/island/corner.ts`, `src/island/island.ts`, `src/views/subagent.ts`, `src/views/subagent-card.ts`, `src/views/views.ts`, `src/style.css`, `tests/corner.test.mjs`, `tests/subagent-card.test.mjs`, cette spec et ce plan.
+
+**Interfaces:**
+- Rust : `SUBAGENT_PANEL_W = 320.0`, `SUBAGENT_PANEL_MAX_H = 300.0`. `apply_corner` passe cette taille à `corner_layout` quand `CORNER_PANEL_ANCHOR` contient une ancre, et garde `(PANEL_W, PANEL_H)` sans ancre. Le panneau ancré est centré sur l'ancre, borné à la zone de travail, placé à `MINI_GAP` au-dessus dans la moitié basse et en dessous dans la moitié haute ou faute de place au-dessus.
+- Page : `subagentPanelPlacement(layout, anchor, height)` place la carte de hauteur réelle dans la zone maximale donnée par Rust et renvoie le côté et l'abscisse de la pointe. `subagentClickAction(openKey, clickedKey, smallPanel)` ferme la carte lors d'un second clic sur la même mini en mode coin.
+- `Island` garde l'ancre physique de la mini, mesure la hauteur du contenu sans polling, envoie le rectangle réel à `cornerRects`, masque l'en-tête et les onglets seulement pour cette carte, et efface l'ancre quand la grande mascotte ou une autre vue reprend le grand panneau.
+- `buildSubagent` affiche toutes les étapes dans une liste défilante, limite la réponse finale à quatre lignes, et fournit un bouton de fermeture avec `aria-label`, état pressé et `:focus-visible`. Hors mode coin, les six dernières étapes restent affichées dans le grand panneau.
+
+- [ ] **Step 1: Tests Rust** dans `corner_tests` : `an_anchored_subagent_panel_is_small` ; `a_queued_subagent_panel_sits_above_its_mini` ; `a_placed_subagent_panel_sits_above_its_mini` ; `a_subagent_panel_opens_below_a_mini_near_the_top` ; `a_subagent_panel_stays_on_screen_at_an_edge` ; `no_anchor_keeps_the_large_panel_size_and_place`. Adapter les deux tests de la tâche 10 qui attendaient un panneau de 720 x 320 avec ancre. Pousser seuls : CI rouge.
+- [ ] **Step 2: Tests TS** : `the small subagent card points at its mini from above` ; `the small subagent card points at its mini from below` ; `clicking the open subagent mini closes its small card` ; `the big mascot replaces a small subagent card with the big panel` ; `the card keeps every step for its scrolling list and the answer`. Lancer : échec.
+- [ ] **Step 3:** Implémenter Rust et page, sans changer le grand panneau ni le mode haut.
+- [ ] **Step 4:** Tests TS, `npx tsc --noEmit`, `npx vite build` verts ; CI Rust verte.

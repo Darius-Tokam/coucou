@@ -16,7 +16,7 @@ export function subagentCard(mascot: AgentMascot, color: string): SubagentCard {
     color,
     state: mascot.state,
     project: mascot.project,
-    steps: mascot.steps.slice(-6),
+    steps: mascot.steps,
     finalText: mascot.finalText,
   };
 }
