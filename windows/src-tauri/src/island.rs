@@ -104,11 +104,19 @@ const CORNER_MARGIN: f64 = 16.0;
 pub(crate) static CORNER_MINIS: Mutex<Vec<MiniSlot>> = Mutex::new(Vec::new());
 pub(crate) static CORNER_MINI_DRAG: AtomicBool = AtomicBool::new(false);
 static CORNER_MASCOT_OFFSET: Mutex<(f64, f64)> = Mutex::new((0.0, 0.0));
+static CORNER_HELD_RECTS: Mutex<Vec<IslandRect>> = Mutex::new(Vec::new());
 
 #[derive(Deserialize, Clone, Copy, Debug, PartialEq)]
 pub struct MiniSlot {
     pub size: f64,
     pub at: Option<(f64, f64)>,
+}
+
+pub(crate) fn replace_corner_minis(slots: Vec<MiniSlot>, dragging: bool) {
+    *CORNER_MINIS.lock().unwrap() = slots;
+    if !dragging {
+        CORNER_MINI_DRAG.store(false, Ordering::Relaxed);
+    }
 }
 
 /// Corner mode: where the window goes and what sits where inside it.
@@ -264,15 +272,41 @@ pub fn corner_layout(
             mini_rects[index] = IslandRect { x, y, w: mini_size, h: mini_size };
         }
     }
+    let mut placed_rects = Vec::new();
     for (index, mini) in minis.iter().enumerate() {
         let Some((x, y)) = mini.at else { continue };
         let mini_size = mini.size * scale;
-        mini_rects[index] = IslandRect {
+        let mut placed = IslandRect {
             x: x.min(right - mini_size).max(work.x),
             y: y.min(bottom - mini_size).max(work.y),
             w: mini_size,
             h: mini_size,
         };
+        if placed_rects.iter().any(|other| same_origin(*other, placed)) {
+            let step = mini_size / 2.0;
+            let directions = if placed.x + mini_size / 2.0 < work.x + work.w / 2.0 {
+                [1.0, -1.0]
+            } else {
+                [-1.0, 1.0]
+            };
+            'distance: for distance in 1..=placed_rects.len() + 1 {
+                for direction in directions {
+                    let candidate = IslandRect {
+                        x: placed.x + direction * step * distance as f64,
+                        ..placed
+                    };
+                    if candidate.x >= work.x
+                        && candidate.x + candidate.w <= right
+                        && !placed_rects.iter().any(|other| same_origin(*other, candidate))
+                    {
+                        placed = candidate;
+                        break 'distance;
+                    }
+                }
+            }
+        }
+        mini_rects[index] = placed;
+        placed_rects.push(placed);
     }
 
     let mut block_rects = Vec::with_capacity(queued.len() + 1);
@@ -376,6 +410,10 @@ pub fn hits(rects: &[IslandRect], x: f64, y: f64) -> bool {
     })
 }
 
+fn same_origin(a: IslandRect, b: IslandRect) -> bool {
+    a.x == b.x && a.y == b.y
+}
+
 #[derive(Debug, PartialEq)]
 struct FoldedPointer {
     takes_mouse: bool,
@@ -387,6 +425,17 @@ fn folded_pointer(rects: &[IslandRect], x: f64, y: f64) -> FoldedPointer {
         takes_mouse: hits(rects, x, y),
         wakes: rects.first().is_some_and(|mascot| hits(std::slice::from_ref(mascot), x, y)),
     }
+}
+
+fn active_pointer_takes_mouse(
+    drawn: &[IslandRect],
+    held: &[IslandRect],
+    x: f64,
+    y: f64,
+    button_down: bool,
+    mini_dragging: bool,
+) -> bool {
+    hits(drawn, x, y) || (button_down && (mini_dragging || hits(held, x, y)))
 }
 
 /// Wakes / parks the cursor poll thread so a hidden island costs literally nothing.
@@ -841,6 +890,16 @@ fn apply_corner(win: &WebviewWindow, m: &Monitor, corner_pos: Option<(f64, f64)>
         mascot_size,
     );
     remember_mascot_offset(&layout, scale);
+    let mut held_rects: Vec<IslandRect> = layout.panel.into_iter().collect();
+    let mut group_rects = vec![layout.mascot];
+    group_rects.extend(
+        minis
+            .iter()
+            .zip(layout.minis.iter())
+            .filter_map(|(slot, rect)| slot.at.is_none().then_some(*rect)),
+    );
+    held_rects.push(bounding(&group_rects));
+    *CORNER_HELD_RECTS.lock().unwrap() = held_rects;
     let w = layout.window;
     let _ = win.set_size(PhysicalSize::new(w.w.round() as u32, w.h.round() as u32));
     let _ = win.set_position(PhysicalPosition::new(w.x.round() as i32, w.y.round() as i32));
@@ -977,17 +1036,14 @@ pub fn spawn_cursor_poll(app: AppHandle, gate: Arc<PollGate>) {
                 // Click-through: the window only takes the mouse over the island
                 // shape. A small entry margin means the flag is already off by the
                 // time a moving cursor reaches a button.
-                let on_island = hits(&gate.rects.lock().unwrap(), x, y);
-
                 // A file being dragged has to be able to find us. WS_EX_TRANSPARENT
                 // — what click-through is on Windows — hides the window from
                 // WindowFromPoint, so OLE finds no drop target and shows the "no
                 // drop" cursor. macOS has no such problem: AppKit delivers drags to
-                // registered destinations whatever ignoresMouseEvents says. So while
-                // a button is held anywhere over the panel, the whole panel takes
-                // the mouse, which also makes the drop zone as forgiving as the Mac's.
-                // A press may be the start of a drag: make sure the drop target is
-                // ours before the file arrives.
+                // registered destinations whatever ignoresMouseEvents says. While a
+                // button is held, only the panel and the mascot queue stay drop
+                // targets. A mini drag is the exception: its moving box keeps the
+                // mouse across the work area.
                 let down = left_button_down();
                 if down && !was_down {
                     let handle = app.clone();
@@ -995,13 +1051,23 @@ pub fn spawn_cursor_poll(app: AppHandle, gate: Arc<PollGate>) {
                 }
                 was_down = down;
 
-                let dragging = down
-                    && x >= 0.0
-                    && x <= size.0
-                    && y >= 0.0
-                    && y <= size.1;
-
-                let accept = on_island || dragging;
+                let held_rects = if corner_mode(&app).is_some() {
+                    CORNER_HELD_RECTS.lock().unwrap().clone()
+                } else {
+                    vec![IslandRect { x: 0.0, y: 0.0, w: size.0, h: size.1 }]
+                };
+                let mini_dragging = CORNER_MINI_DRAG.load(Ordering::Relaxed);
+                let drawn = gate.rects.lock().unwrap();
+                let accept = active_pointer_takes_mouse(
+                    drawn.as_slice(),
+                    &held_rects,
+                    x,
+                    y,
+                    down,
+                    mini_dragging,
+                );
+                drop(drawn);
+                let dragging = down && (mini_dragging || hits(&held_rects, x, y));
                 if gate.ignoring.load(Ordering::Relaxed) == accept {
                     // Under the gate's lock, and only while it is open: a tick
                     // still running as the island folds must not race the

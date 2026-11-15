@@ -200,6 +200,11 @@ fn set_collapsed(app: AppHandle, shared: State<Shared>, collapsed: bool, width: 
 /// that follow are the user's, not the window's own.
 static CORNER_DRAG: AtomicBool = AtomicBool::new(false);
 
+fn finish_corner_drag(reapply: impl FnOnce()) {
+    CORNER_DRAG.store(false, Ordering::Relaxed);
+    reapply();
+}
+
 #[tauri::command]
 fn corner_drag_started() {
     CORNER_DRAG.store(true, Ordering::Relaxed);
@@ -242,7 +247,6 @@ fn corner_moved(app: &AppHandle, x: f64, y: f64) {
             seen = now;
         }
         *LATEST.lock().unwrap() = None;
-        CORNER_DRAG.store(false, Ordering::Relaxed);
         let shared = app.state::<Shared>();
         let settings = {
             let mut current = shared.settings.lock().unwrap();
@@ -253,6 +257,10 @@ fn corner_moved(app: &AppHandle, x: f64, y: f64) {
             log::line(format!("could not save the mascot's place: {err}"));
         }
         let _ = app.emit("settings-changed", settings);
+        let pref = shared.settings.lock().unwrap().screen.clone();
+        let collapsed = shared.gate.collapsed.load(Ordering::Relaxed);
+        let size = *shared.gate.collapsed_size.lock().unwrap();
+        finish_corner_drag(|| island::apply_geometry(&app, &pref, collapsed.then_some(size)));
     });
 }
 
@@ -293,8 +301,13 @@ fn reposition(app: AppHandle, shared: State<Shared>) {
 }
 
 #[tauri::command]
-fn set_corner_minis(app: AppHandle, shared: State<Shared>, slots: Vec<island::MiniSlot>) {
-    *island::CORNER_MINIS.lock().unwrap() = slots;
+fn set_corner_minis(
+    app: AppHandle,
+    shared: State<Shared>,
+    slots: Vec<island::MiniSlot>,
+    dragging: bool,
+) {
+    island::replace_corner_minis(slots, dragging);
     let pref = shared.settings.lock().unwrap().screen.clone();
     let collapsed = shared.gate.collapsed.load(Ordering::Relaxed);
     let size = *shared.gate.collapsed_size.lock().unwrap();
