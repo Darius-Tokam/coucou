@@ -25,10 +25,13 @@ test("the settings offer size, display and subagent colors", () => {
     miniPositions: { "claude:type:Explore": { x: 100, y: 100 } },
   };
   const section = mascotSection(() => settings, () => {});
-  const range = section.find("INPUT").find((input) => input.getAttribute("type") === "range");
+  // Two sliders since the big mascot got its own: this one is the small mascots'.
+  const range = section.find("INPUT").find((input) =>
+    input.getAttribute("type") === "range"
+      && input.getAttribute("min") === "60"
+      && input.getAttribute("max") === "120"
+  );
   assert.ok(range);
-  assert.equal(range.getAttribute("min"), "60");
-  assert.equal(range.getAttribute("max"), "120");
   assert.equal(range.getAttribute("step"), "10");
   assert.match(section.textContent, /Small mascots/);
   assert.match(section.textContent, /Subagent colors/);
