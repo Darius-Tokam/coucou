@@ -102,6 +102,7 @@ pub const MINI_GAP: f64 = 8.0;
 /// Gap between the mascot and the edges of the work area, logical px.
 const CORNER_MARGIN: f64 = 16.0;
 pub(crate) static CORNER_MINIS: AtomicUsize = AtomicUsize::new(0);
+static CORNER_MASCOT_OFFSET: Mutex<(f64, f64)> = Mutex::new((0.0, 0.0));
 
 /// Corner mode: where the window goes and what sits where inside it.
 /// `window` is in physical screen px; the other rectangles are window-logical px.
@@ -112,6 +113,22 @@ pub struct CornerLayout {
     pub mascot: IslandRect,
     pub panel: Option<IslandRect>,
     pub minis: Vec<IslandRect>,
+}
+
+fn physical_mascot_offset(layout: &CornerLayout, scale: f64) -> (f64, f64) {
+    (layout.mascot.x * scale, layout.mascot.y * scale)
+}
+
+fn mascot_at_from_window(window_at: (f64, f64), offset: (f64, f64)) -> (f64, f64) {
+    (window_at.0 + offset.0, window_at.1 + offset.1)
+}
+
+fn remember_mascot_offset(layout: &CornerLayout, scale: f64) {
+    *CORNER_MASCOT_OFFSET.lock().unwrap() = physical_mascot_offset(layout, scale);
+}
+
+pub fn dragged_mascot_at(window_at: (f64, f64)) -> (f64, f64) {
+    mascot_at_from_window(window_at, *CORNER_MASCOT_OFFSET.lock().unwrap())
 }
 
 /// The window for the mascot at `mascot_at` (physical top-left; None, or off
@@ -173,21 +190,49 @@ pub fn corner_layout(
 
     let mini_size = MINI_SIZE * scale;
     let gap = MINI_GAP * scale;
-    let room = if left { mx - work.x } else { right - (mx + size) };
-    let per_row = (((room + gap) / (mini_size + gap)).floor() as usize).max(1);
+    let step = mini_size + gap;
+    let capacity = |room: f64| (((room.max(0.0) + gap) / step).floor() as usize);
+    let preferred_room = if left { mx - work.x } else { right - (mx + size) };
+    let opposite_room = if left { right - (mx + size) } else { mx - work.x };
+    let preferred_capacity = capacity(preferred_room);
+    let total_capacity = (preferred_capacity + capacity(opposite_room)).max(1);
+    let max_rows = capacity(work.h).max(1);
+    let needed_per_row = minis.div_ceil(max_rows);
+    let per_row = preferred_capacity.max(needed_per_row).min(total_capacity).max(1);
+    let rows = minis.div_ceil(per_row);
+    let first_y = if up { my + size - mini_size } else { my };
+    let raw_top = if up { first_y - (rows - 1) as f64 * step } else { first_y };
+    let raw_bottom = if up { first_y + mini_size } else { first_y + (rows - 1) as f64 * step + mini_size };
+    let y_shift = if raw_top < work.y {
+        work.y - raw_top
+    } else if raw_bottom > bottom {
+        bottom - raw_bottom
+    } else {
+        0.0
+    };
     let mut mini_rects = Vec::with_capacity(minis);
     for i in 0..minis {
         let row = (i / per_row) as f64;
-        let column = (i % per_row) as f64;
-        let x = if left {
-            mx - gap - mini_size - column * (mini_size + gap)
+        let column = i % per_row;
+        let x = if column < preferred_capacity {
+            let column = column as f64;
+            if left {
+                mx - gap - mini_size - column * step
+            } else {
+                mx + size + gap + column * step
+            }
         } else {
-            mx + size + gap + column * (mini_size + gap)
+            let column = (column - preferred_capacity) as f64;
+            if left {
+                mx + size + gap + column * step
+            } else {
+                mx - gap - mini_size - column * step
+            }
         };
         let y = if up {
-            my + size - mini_size - row * (mini_size + gap)
+            first_y - row * step + y_shift
         } else {
-            my + row * (mini_size + gap)
+            first_y + row * step + y_shift
         };
         mini_rects.push(IslandRect { x, y, w: mini_size, h: mini_size });
     }
@@ -205,9 +250,25 @@ pub fn corner_layout(
         let fits = |y: f64| y >= work.y && y + ph <= bottom;
         let preferred = if up { above } else { below };
         let alternate = if up { below } else { above };
-        let py = if fits(preferred) { preferred } else { alternate };
-        let py = py.min(bottom - ph).max(work.y);
-        IslandRect { x: px, y: py, w: pw, h: ph }
+        if fits(preferred) || fits(alternate) {
+            let py = if fits(preferred) { preferred } else { alternate };
+            return IslandRect { x: px, y: py, w: pw, h: ph };
+        }
+
+        let before = block.x - gap - pw;
+        let after = block.x + block.w + gap;
+        let fits_x = |x: f64| x >= work.x && x + pw <= right;
+        let side = if left { before } else { after };
+        let other_side = if left { after } else { before };
+        let px = if fits_x(side) {
+            side
+        } else if fits_x(other_side) {
+            other_side
+        } else {
+            px
+        };
+        let py = if up { mascot.y + mascot.h - ph } else { mascot.y };
+        IslandRect { x: px, y: py.min(bottom - ph).max(work.y), w: pw, h: ph }
     });
 
     let mut drawn = block_rects;
@@ -272,6 +333,19 @@ pub fn hits(rects: &[IslandRect], x: f64, y: f64) -> bool {
             && y >= r.y - HIT_MARGIN
             && y <= r.y + r.h + HIT_MARGIN
     })
+}
+
+#[derive(Debug, PartialEq)]
+struct FoldedPointer {
+    takes_mouse: bool,
+    wakes: bool,
+}
+
+fn folded_pointer(rects: &[IslandRect], x: f64, y: f64) -> FoldedPointer {
+    FoldedPointer {
+        takes_mouse: hits(rects, x, y),
+        wakes: rects.first().is_some_and(|mascot| hits(std::slice::from_ref(mascot), x, y)),
+    }
 }
 
 /// Wakes / parks the cursor poll thread so a hidden island costs literally nothing.
@@ -717,6 +791,7 @@ fn apply_corner(win: &WebviewWindow, m: &Monitor, corner_pos: Option<(f64, f64)>
         open.then_some((PANEL_W, PANEL_H)),
         CORNER_MINIS.load(Ordering::Relaxed),
     );
+    remember_mascot_offset(&layout, scale);
     let w = layout.window;
     let _ = win.set_size(PhysicalSize::new(w.w.round() as u32, w.h.round() as u32));
     let _ = win.set_position(PhysicalPosition::new(w.x.round() as i32, w.y.round() as i32));
@@ -880,9 +955,8 @@ pub fn spawn_cursor_poll(app: AppHandle, gate: Arc<PollGate>) {
                 let accept = on_island || dragging;
                 if gate.ignoring.load(Ordering::Relaxed) == accept {
                     // Under the gate's lock, and only while it is open: a tick
-                    // still running as the island folds must not make the
-                    // closed island click-through after set_collapsed made it
-                    // take the mouse — nothing would ever wake it again.
+                    // still running as the island folds must not race the
+                    // parked loop's click-through decision after the gate closes.
                     let active = gate.active.lock().unwrap();
                     if !*active {
                         break;
@@ -903,16 +977,23 @@ pub fn spawn_cursor_poll(app: AppHandle, gate: Arc<PollGate>) {
     });
 }
 
-/// The cursor is on the folded window: it takes the mouse, and the page hears
-/// `closed-hover` (it opens the compact island).
+/// Folded in a corner, only drawn rectangles take the mouse. The page hears
+/// `closed-hover` only over the large mascot.
 fn wake_if_hovered(app: &AppHandle, gate: &PollGate) {
     let Some(win) = window(app) else { return };
-    let (Ok(origin), Ok(size), Some((cx, cy))) = (win.outer_position(), win.inner_size(), cursor_physical()) else { return };
-    let x = cx - origin.x as f64;
-    let y = cy - origin.y as f64;
-    if x >= 0.0 && y >= 0.0 && x <= size.width as f64 && y <= size.height as f64 + 2.0 {
-        gate.ignoring.store(false, Ordering::Relaxed);
-        platform::set_click_through(&win, false);
+    let Some((x, y, size)) = cursor_in_window(&win) else { return };
+    let pointer = if corner_mode(app).is_some() {
+        folded_pointer(&gate.rects.lock().unwrap(), x, y)
+    } else {
+        let inside = x >= 0.0 && y >= 0.0 && x <= size.0 && y <= size.1 + 2.0;
+        FoldedPointer { takes_mouse: inside, wakes: inside }
+    };
+    let ignore = !pointer.takes_mouse;
+    if gate.ignoring.load(Ordering::Relaxed) != ignore {
+        gate.ignoring.store(ignore, Ordering::Relaxed);
+        platform::set_click_through(&win, ignore);
+    }
+    if pointer.wakes {
         let _ = win.emit("closed-hover", ());
     }
 }
@@ -926,6 +1007,9 @@ pub fn refresh_click_through(app: &AppHandle, gate: &PollGate) {
     if platform::CURSOR_POLL {
         set_ignore_cursor(app, false);
         gate.forget_ignore_state();
+        if gate.collapsed.load(Ordering::Relaxed) && corner_mode(app).is_some() {
+            wake_if_hovered(app, gate);
+        }
         return;
     }
     let Some(win) = window(app) else { return };

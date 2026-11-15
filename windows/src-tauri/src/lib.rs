@@ -189,7 +189,8 @@ fn set_collapsed(app: AppHandle, shared: State<Shared>, collapsed: bool, width: 
         shared.gate.set_active(false);
     }
     island::apply_geometry(&app, &pref, collapsed.then_some(size));
-    // The closed island must always take the mouse, and a resize invalidates the flag.
+    // A resize invalidates click-through; in a folded corner only the drawn
+    // rectangles take the mouse.
     island::refresh_click_through(&app, &shared.gate);
     shared.gate.set_active(!collapsed);
     platform::set_pointer_watch(!collapsed);
@@ -204,8 +205,8 @@ fn corner_drag_started() {
     CORNER_DRAG.store(true, Ordering::Relaxed);
 }
 
-/// Corner mode, closed, during a drag: the window is the mascot, so where it
-/// moves is where the mascot now lives. Kept at once (opening the card right
+/// Corner mode, closed, during a drag: the mascot keeps its offset inside the
+/// group window. Its screen position is kept at once (opening the card right
 /// after the drop must use it), written to settings.json once it has stayed
 /// put for half a second. Moves the window makes itself (folding, Windows
 /// rehoming it when a display goes) are not the user's: never saved.
@@ -217,6 +218,7 @@ fn corner_moved(app: &AppHandle, x: f64, y: f64) {
     {
         return;
     }
+    let (x, y) = island::dragged_mascot_at((x, y));
     shared.settings.lock().unwrap().corner_pos = Some(settings::CornerPos { x, y });
     static LATEST: Mutex<Option<(f64, f64)>> = Mutex::new(None);
     {
