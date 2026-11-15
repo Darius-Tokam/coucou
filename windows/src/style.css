@@ -1140,6 +1140,12 @@ body {
   z-index: 1;
 }
 
+/* The popover only uses the clipped card. Hide the island chrome that normally
+   sits outside it while leaving the parent's pointer visible. */
+#island.subagent-popover > :not(#island-clip) {
+  visibility: hidden;
+}
+
 #island.subagent-popover #content {
   padding: 0;
 }
