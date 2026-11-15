@@ -171,3 +171,18 @@ test("only a mini mascot frame asks for reduced resolution", () => {
     dom.restore();
   }
 });
+
+test("a thumbnail frame asks for thumbnail mode", () => {
+  const dom = hostDom();
+  try {
+    const thumb = new MascotHost(dom.root, { thumb: true });
+    thumb.load({ name: "Thumbnail", baseUrl: "mascot://localhost/lib/orbi/" });
+    const url = new URL(dom.root.children[0].src);
+
+    assert.equal(url.searchParams.get("thumb"), "1");
+    assert.equal(url.searchParams.has("mini"), false);
+    thumb.dispose();
+  } finally {
+    dom.restore();
+  }
+});

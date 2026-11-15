@@ -576,11 +576,11 @@ mod tests {
     fn route_splits_the_slot_from_the_path() {
         assert_eq!(
             route("/claude/manifest.json"),
-            Some((Slot::Claude, "/manifest.json".into()))
+            Some((RouteRoot::Slot(Slot::Claude), "/manifest.json".into()))
         );
         assert_eq!(
             route("/codex/__coucou_frame.html"),
-            Some((Slot::Codex, "/__coucou_frame.html".into()))
+            Some((RouteRoot::Slot(Slot::Codex), "/__coucou_frame.html".into()))
         );
         assert_eq!(route("/other/x"), None);
         assert_eq!(route("/"), None);
@@ -860,6 +860,8 @@ mod tests {
         let page = String::from_utf8(respond(&root, "/__coucou_frame.html?mini=1", None).body).unwrap();
         assert!(page.contains(r#"data.type === "pause""#));
         assert!(page.contains(r#"searchParams.get("mini")"#));
+        assert!(page.contains(r#"searchParams.get("thumb")"#));
+        assert!(page.contains("if (!mini && !thumb) return;"));
     }
 
     #[test]
@@ -883,5 +885,106 @@ mod tests {
         write(&bad.join("mascot.js"), "// component");
         assert_eq!(install(&bad, &root, "current"), Err(ImportError::WrongVersion));
         assert_eq!(fs::read_to_string(root.join("current/manifest.json")).unwrap(), before);
+    }
+
+    #[test]
+    fn an_import_is_kept_in_the_library() {
+        let root = scratch("library-import-root");
+        let export = scratch("library-import-source").join("orbi-blue");
+        blob_export(&export.join("mascot"));
+
+        install(&export.join("mascot"), &root, "current").unwrap();
+
+        assert!(root.join("library/orbi-blue/manifest.json").is_file());
+        assert!(root.join("current/manifest.json").is_file());
+    }
+
+    #[test]
+    fn a_failed_import_adds_nothing_to_the_library() {
+        let root = scratch("library-failed-root");
+        let export = scratch("library-failed-source").join("broken");
+        write(&export.join("manifest.json"), "{ broken");
+        write(&export.join("mascot.js"), "// component");
+
+        assert_eq!(install(&export, &root, "current"), Err(ImportError::BadManifest));
+        assert!(!root.join("library/broken").exists());
+    }
+
+    #[test]
+    fn reimporting_the_same_folder_replaces_its_library_copy() {
+        let root = scratch("library-reimport-root");
+        let export = scratch("library-reimport-source").join("orbi");
+        blob_export(&export);
+        install(&export, &root, "current").unwrap();
+        write(&export.join("manifest.json"), &BLOB.replace("nuage", "nuage neuf"));
+
+        install(&export, &root, "current").unwrap();
+
+        let kept = fs::read_to_string(root.join("library/orbi/manifest.json")).unwrap();
+        assert!(kept.contains("nuage neuf"));
+    }
+
+    #[test]
+    fn the_gallery_lists_the_library_then_the_folder() {
+        let root = scratch("gallery-order-root");
+        blob_export(&root.join("library/saved"));
+        let folder = scratch("gallery-order-folder");
+        blob_export(&folder.join("available/mascot"));
+
+        let items = gallery_from(&root, Some(&folder));
+
+        assert_eq!(items.iter().map(|item| (item.source.as_str(), item.id.as_str())).collect::<Vec<_>>(), [
+            ("library", "saved"),
+            ("folder", "available"),
+        ]);
+        assert!(items[0].info.base_url.ends_with("lib/saved/"));
+        assert!(items[1].info.base_url.ends_with("dir/available/"));
+    }
+
+    #[test]
+    fn an_invalid_export_in_the_folder_is_skipped() {
+        let root = scratch("gallery-invalid-root");
+        let folder = scratch("gallery-invalid-folder");
+        blob_export(&folder.join("good"));
+        write(&folder.join("broken/manifest.json"), "{ broken");
+
+        let items = gallery_from(&root, Some(&folder));
+
+        assert_eq!(items.iter().map(|item| item.id.as_str()).collect::<Vec<_>>(), ["good"]);
+    }
+
+    #[test]
+    fn a_gallery_id_cannot_climb_out() {
+        for id in ["..", "...", "a/b", r"a\b"] {
+            assert!(!valid_id(id), "{id}");
+        }
+        assert!(valid_id("orbi-blue_2.0"));
+        assert_eq!(route("/lib/%2e%2e/manifest.json"), None);
+        let dir_route = route("/dir/orbi/manifest.json").unwrap();
+        assert!(resolve_route(Path::new("mascots"), None, dir_route).is_none());
+    }
+
+    #[test]
+    fn the_protocol_serves_a_library_export() {
+        let root = scratch("gallery-protocol-root");
+        blob_export(&root.join("library/orbi"));
+        let route = route("/lib/orbi/manifest.json").unwrap();
+        let (export, rest) = resolve_route(&root, None, route).unwrap();
+
+        let served = respond(&export, &rest, None);
+
+        assert_eq!(served.status, 200);
+        assert_eq!(serde_json::from_slice::<serde_json::Value>(&served.body).unwrap()["name"], "nuage");
+    }
+
+    #[test]
+    fn applying_from_the_gallery_installs_into_the_slot() {
+        let root = scratch("gallery-apply-root");
+        blob_export(&root.join("library/orbi"));
+
+        let info = apply_from(&root, None, "library", "orbi", Slot::Codex).unwrap();
+
+        assert_eq!(info.source_id.as_deref(), Some("orbi"));
+        assert!(root.join("codex/manifest.json").is_file());
     }
 }

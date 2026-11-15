@@ -554,6 +554,7 @@ mod tests {
   "islandAnchor": "top",
   "cornerPos": { "x": 100.0, "y": 200.0 },
   "mascotSize": 180.0,
+  "mascotFolder": "C:\\Mascots",
   "miniSize": 96.0,
   "miniDisplay": "sessions",
   "subagentLooks": { "Explore": { "color": "#60A5FA", "accessory": "cap", "eyes": "round", "cheeks": "rose" } },
@@ -644,6 +645,7 @@ mod tests {
     fn customisable_mascot_settings_have_safe_defaults() {
         let settings = Settings::default();
         assert_eq!(settings.mascot_size, 240.0);
+        assert_eq!(settings.mascot_folder, None);
         assert_eq!(settings.mini_size, 120.0);
         assert_eq!(settings.mini_display, "all");
         assert!(settings.subagent_looks.is_empty());
@@ -656,6 +658,7 @@ mod tests {
         let mut old = custom().as_object().unwrap().clone();
         for key in [
             "mascotSize",
+            "mascotFolder",
             "miniSize",
             "miniDisplay",
             "subagentLooks",
@@ -667,6 +670,7 @@ mod tests {
         let loaded = parse(&serde_json::to_vec(&old).unwrap()).unwrap();
 
         assert_eq!(loaded.mascot_size, 240.0);
+        assert_eq!(loaded.mascot_folder, None);
         assert_eq!(loaded.mini_size, 120.0);
         assert_eq!(loaded.mini_display, "all");
         assert!(loaded.subagent_looks.is_empty());
@@ -1129,6 +1133,7 @@ mod tests {
                 "islandAnchor",
                 "cornerPos",
                 "mascotSize",
+                "mascotFolder",
                 "miniSize",
                 "miniDisplay",
                 "subagentLooks",

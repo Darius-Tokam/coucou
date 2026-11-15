@@ -7,6 +7,7 @@ import { colorForType } from "../mascot/agents";
 import { MASCOT_SIZE, clampMascotSize } from "../island/corner";
 import { h } from "../views/dom";
 import { importErrorText } from "./mascot-errors";
+import { mascotGallery } from "./mascot-gallery";
 import { subagentLookFor } from "./mascot-looks";
 
 const ACCESSORIES = ["none", "beret", "glasses", "sunglasses"] as const;
@@ -289,11 +290,13 @@ export function mascotSection(
 
   const claude = slotBlock("claude", t("Claude Code mascot"));
   const codex = slotBlock("codex", t("Codex mascot"));
+  const gallery = mascotGallery(settings, save);
 
   return h(
     "section",
     {},
     h("h2", {}, h("span", { text: t("Mascot") })),
+    gallery,
     h("div", { class: "row" }, h("label", { text: t("Where Coucou lives") }), anchor),
     h("div", { class: "hint", text: t("In a corner, your mascot waits without a background. Click it to open Coucou, drag it to move it. Each running agent gets its own small mascot.") }),
     claude,

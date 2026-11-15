@@ -64,6 +64,16 @@ export interface MascotInfo {
   scriptPath: string;
   /** Root of the `mascot` protocol: manifest.json and mascot.js live under it. */
   baseUrl: string;
+  /** Export folder name retained when this copy was installed. */
+  sourceId: string | null;
+}
+
+export type MascotGallerySource = "library" | "folder";
+
+export interface MascotGalleryItem {
+  id: string;
+  source: MascotGallerySource;
+  info: MascotInfo;
 }
 
 export interface MascotChanged {
@@ -80,6 +90,29 @@ async function mascotImport(folder: string, slot: MascotSlot): Promise<MascotInf
   if (!IS_TAURI) return "io";
   try {
     return await invoke<MascotInfo>("mascot_import", { folder, slot });
+  } catch (err) {
+    return typeof err === "string" ? err : "io";
+  }
+}
+
+async function mascotApply(
+  source: MascotGallerySource,
+  id: string,
+  slot: MascotSlot,
+): Promise<MascotInfo | string> {
+  if (!IS_TAURI) return "io";
+  try {
+    return await invoke<MascotInfo>("mascot_apply", { source, id, slot });
+  } catch (err) {
+    return typeof err === "string" ? err : "io";
+  }
+}
+
+async function mascotForget(id: string): Promise<string | null> {
+  if (!IS_TAURI) return "io";
+  try {
+    await invoke<void>("mascot_forget", { id });
+    return null;
   } catch (err) {
     return typeof err === "string" ? err : "io";
   }
@@ -343,6 +376,9 @@ export const Bridge = {
   pickFolder: (start: string | null) => call<string | null>("pick_folder", { start }),
 
   mascotImport,
+  mascotGallery: () => call<MascotGalleryItem[]>("mascot_gallery"),
+  mascotApply,
+  mascotForget,
   /** The active MascotForge mascot in one slot, null for Mochi. */
   mascotCurrent: (slot: MascotSlot) => call<MascotInfo | null>("mascot_current", { slot }),
   /** Back to Mochi in one slot. */

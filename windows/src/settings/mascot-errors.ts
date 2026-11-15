@@ -13,6 +13,8 @@ export function importErrorText(code: string): string {
       return t("The export's manifest.json can't be read.");
     case "wrong_version":
       return t("This export is too old. Export it again from MascotForge.");
+    case "bad_id":
+      return t("This mascot is no longer available.");
     default:
       return t("Coucou couldn't copy the folder.");
   }

@@ -25,6 +25,7 @@ function sameLook(a: MascotLook | null, b: MascotLook | null): boolean {
 
 export interface MascotHostOptions {
   mini?: boolean;
+  thumb?: boolean;
 }
 
 export class MascotHost {
@@ -40,6 +41,7 @@ export class MascotHost {
   /** The last custom look, replayed once the mascot is ready. */
   private look: MascotLook | null = null;
   private readonly mini: boolean;
+  private readonly thumb: boolean;
   private readonly messageListener = (event: MessageEvent<FrameMessage>) => {
     if (!this.frame || event.source !== this.frame.contentWindow || event.origin !== this.origin) return;
     if (event.data.type === "ready") {
@@ -54,6 +56,7 @@ export class MascotHost {
 
   constructor(private readonly container: HTMLElement, options: MascotHostOptions = {}) {
     this.mini = options.mini === true;
+    this.thumb = options.thumb === true;
     window.addEventListener("message", this.messageListener);
   }
 
@@ -79,7 +82,8 @@ export class MascotHost {
     frame.style.cssText =
       "position:absolute;inset:0;width:100%;height:100%;border:0;background:transparent;pointer-events:none;";
     // Its own origin: the export's scripts can't reach this window or Tauri.
-    const query = this.mini ? `mini=1&v=${++this.loads}` : `v=${++this.loads}`;
+    const mode = this.thumb ? "thumb=1&" : this.mini ? "mini=1&" : "";
+    const query = `${mode}v=${++this.loads}`;
     frame.src = `${info.baseUrl}__coucou_frame.html?${query}`;
     this.frame = frame;
     this.container.appendChild(frame);

@@ -122,6 +122,7 @@ export interface Settings {
   /** Corner mode: the mascot's top-left in physical screen px; Rust saves it. */
   cornerPos: { x: number; y: number } | null;
   mascotSize: number;
+  mascotFolder: string | null;
   miniSize: number;
   miniDisplay: MiniDisplay;
   subagentLooks: Record<string, SubagentLook>;
@@ -203,6 +204,7 @@ export const DEFAULT_SETTINGS: Settings = {
   islandAnchor: "corner",
   cornerPos: null,
   mascotSize: 240,
+  mascotFolder: null,
   miniSize: 120,
   miniDisplay: "all",
   subagentLooks: {},

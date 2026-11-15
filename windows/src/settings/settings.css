@@ -140,6 +140,79 @@ button:disabled {
   cursor: default;
 }
 
+button:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.65);
+  outline-offset: 2px;
+}
+
+/* Settings mascot gallery: previews stay transparent inside compact cards. */
+.mascot-gallery {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.mascot-gallery > h3 {
+  font: 600 12px var(--font);
+}
+
+.mascot-gallery-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.mascot-gallery-item {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  padding: 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.mascot-gallery-preview {
+  position: relative;
+  width: 96px;
+  height: 96px;
+}
+
+.mascot-gallery-name {
+  width: 100%;
+  overflow: hidden;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.mascot-gallery-actions {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.mascot-gallery-actions button {
+  padding: 5px 9px;
+  font-size: 11px;
+}
+
+.mascot-gallery-actions button.active {
+  color: #86efac;
+  box-shadow: inset 0 0 0 1px rgba(34, 197, 94, 0.5);
+}
+
+.mascot-gallery-error {
+  color: #ff8d97;
+  text-align: center;
+}
+
 code,
 .path {
   font: 400 11.5px var(--mono);
