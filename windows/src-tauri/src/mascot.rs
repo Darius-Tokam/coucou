@@ -813,15 +813,18 @@ pub fn mascot_apply(
 
 /// Removes a saved gallery copy without changing an installed slot.
 #[tauri::command]
-pub fn mascot_forget(id: String) -> Result<(), String> {
+pub fn mascot_forget(app: AppHandle, id: String) -> Result<(), String> {
     if !valid_id(&id) {
         return Err("bad_id".into());
     }
     let path = mascots_dir().join("library").join(id);
     if !path.exists() {
+        let _ = app.emit("mascot-gallery-changed", ());
         return Ok(());
     }
-    std::fs::remove_dir_all(path).map_err(|_| "io".to_string())
+    std::fs::remove_dir_all(path).map_err(|_| "io".to_string())?;
+    let _ = app.emit("mascot-gallery-changed", ());
+    Ok(())
 }
 
 /// The active mascot, if any.

@@ -137,6 +137,12 @@ pub struct Settings {
     pub mini_size: f64,
     /// Which agent minis the corner shows: "all", "sessions" or "none".
     pub mini_display: String,
+    /// Which export minis use: "role" or a stable pick from "gallery".
+    pub mini_mascot_mode: String,
+    /// A gallery source and id pinned to a project or subagent type.
+    pub mini_mascot_pins: BTreeMap<String, String>,
+    /// Session projects seen so far, for the pin controls in Settings.
+    pub known_mini_projects: Vec<String>,
     /// A chosen appearance for each known subagent type.
     pub subagent_looks: BTreeMap<String, SubagentLook>,
     /// Subagent types seen so far, including ones without a chosen look.
@@ -248,6 +254,9 @@ impl Default for Settings {
             mascot_folder: None,
             mini_size: 120.0,
             mini_display: "all".into(),
+            mini_mascot_mode: "role".into(),
+            mini_mascot_pins: BTreeMap::new(),
+            known_mini_projects: Vec::new(),
             subagent_looks: BTreeMap::new(),
             known_subagent_types: Vec::new(),
             mini_positions: BTreeMap::new(),
