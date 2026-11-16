@@ -1,8 +1,9 @@
-import { Bridge, type CornerLayout, type MascotInfo, type Rect } from "../core/bridge";
+import { Bridge, type CornerLayout, type MascotGalleryItem, type MascotInfo, type Rect } from "../core/bridge";
 import { State } from "../core/state";
 import {
-  colorForType, exportFor, visibleSlots, type AgentMascot,
+  colorForType, visibleSlots, type AgentMascot,
 } from "../mascot/agents";
+import { miniExportsFor } from "../mascot/mini-exports";
 import { MascotHost } from "../mascot/host";
 import { mascotStateFor, playsImmediately, shouldPause } from "../mascot/states";
 import { DRAG_THRESHOLD } from "../mochi/desktop-logic";
@@ -272,6 +273,7 @@ export class MinisView {
   private moreBox: HTMLButtonElement | null = null;
   private claude: MascotInfo | null = null;
   private codex: MascotInfo | null = null;
+  private gallery: readonly MascotGalleryItem[] = [];
   private list: readonly AgentMascot[] = [];
   private layout: CornerLayout | null = null;
 
@@ -283,11 +285,25 @@ export class MinisView {
     if (this.layout) this.render(this.list, this.layout);
   }
 
+  setGallery(gallery: readonly MascotGalleryItem[]): void {
+    this.gallery = gallery;
+    if (this.layout) this.render(this.list, this.layout);
+  }
+
   render(list: readonly AgentMascot[], layout: CornerLayout): void {
     this.list = list;
     this.layout = layout;
     const slots = visibleSlots(list.length);
     const shown = list.slice(0, slots.shown);
+    const exports = miniExportsFor(
+      shown,
+      this.gallery,
+      {
+        mode: State.settings.miniMascotMode ?? "role",
+        pins: State.settings.miniMascotPins ?? {},
+      },
+      { claude: this.claude, codex: this.codex },
+    );
     const keys = new Set(shown.map((mascot) => mascot.key));
 
     for (const [key, item] of this.items) {
@@ -308,7 +324,7 @@ export class MinisView {
         : State.tasks.find((task) => task.id === mascot.pillId)?.color ?? "#9398a1";
       item.update(
         mascot,
-        exportFor(mascot.family, this.claude, this.codex),
+        exports[index] ?? null,
         layout,
         layout.minis[index] ?? null,
         color,

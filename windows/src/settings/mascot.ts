@@ -1,13 +1,16 @@
 // Settings mascot controls: island placement and one MascotForge export per agent family.
 
-import { Bridge, onEvent, type MascotChanged, type MascotInfo, type MascotSlot } from "../core/bridge";
+import {
+  Bridge, onEvent, type MascotChanged, type MascotGalleryItem, type MascotInfo, type MascotSlot,
+} from "../core/bridge";
 import type { Settings } from "../core/state";
 import { t } from "../i18n/i18n";
 import { colorForType } from "../mascot/agents";
+import { galleryItemKey, miniMascotSettingKey } from "../mascot/mini-exports";
 import { MASCOT_SIZE, clampMascotSize } from "../island/corner";
 import { h } from "../views/dom";
 import { importErrorText } from "./mascot-errors";
-import { mascotGallery } from "./mascot-gallery";
+import { engineLabel, mascotGallery } from "./mascot-gallery";
 import { subagentLookFor } from "./mascot-looks";
 
 const ACCESSORIES = ["none", "beret", "glasses", "sunglasses"] as const;
@@ -208,6 +211,53 @@ export function mascotSection(
     void persist();
   });
 
+  const miniMascotMode = h("select") as HTMLSelectElement;
+  miniMascotMode.append(
+    h("option", { value: "role", text: t("Role mascot") }),
+    h("option", { value: "gallery", text: t("Random from gallery") }),
+  );
+  miniMascotMode.addEventListener("change", () => {
+    settings().miniMascotMode = miniMascotMode.value === "gallery" ? "gallery" : "role";
+    redrawPins();
+    void persist();
+  });
+
+  let galleryItems: readonly MascotGalleryItem[] = [];
+  const pins = h("div", { class: "mascot-looks" });
+  const redrawPins = () => {
+    miniMascotMode.value = settings().miniMascotMode === "gallery" ? "gallery" : "role";
+    pins.style.display = miniMascotMode.value === "gallery" ? "" : "none";
+    pins.replaceChildren(h("h3", { text: t("Pinned small mascots") }));
+    const eligible = galleryItems.filter(
+      (item) => item.info.engine === "3d" || item.info.engine === "blob",
+    );
+    const addPin = (key: string, label: string) => {
+      const select = h("select", { "aria-label": label }) as HTMLSelectElement;
+      select.append(h("option", { value: "", text: t("Random") }));
+      for (const item of eligible) {
+        select.append(h("option", {
+          value: galleryItemKey(item),
+          text: `${item.info.name || item.id} · ${engineLabel(item.info.engine)}`,
+        }));
+      }
+      const saved = settings().miniMascotPins?.[key] ?? "";
+      select.value = eligible.some((item) => galleryItemKey(item) === saved) ? saved : "";
+      select.addEventListener("change", () => {
+        settings().miniMascotPins ??= {};
+        if (select.value) settings().miniMascotPins[key] = select.value;
+        else delete settings().miniMascotPins[key];
+        void persist();
+      });
+      pins.append(h("div", { class: "row" }, h("label", { text: label }), select));
+    };
+    for (const project of settings().knownMiniProjects ?? []) {
+      addPin(miniMascotSettingKey("project", project), t("Project: {name}", { name: project }));
+    }
+    for (const type of settings().knownSubagentTypes ?? []) {
+      addPin(miniMascotSettingKey("type", type), t("Subagent type: {name}", { name: type }));
+    }
+  };
+
   const lookFor = (type: string) => subagentLookFor(settings(), type);
 
   const lookSelect = (
@@ -263,9 +313,6 @@ export function mascotSection(
     }
     refreshBlobControls();
   };
-  registerRefresh?.(redrawLooks);
-  redrawLooks();
-
   const addType = h("input", {
     type: "text",
     placeholder: t("Add a type"),
@@ -290,7 +337,16 @@ export function mascotSection(
 
   const claude = slotBlock("claude", t("Claude Code mascot"));
   const codex = slotBlock("codex", t("Codex mascot"));
-  const gallery = mascotGallery(settings, save);
+  const gallery = mascotGallery(settings, save, (items) => {
+    galleryItems = items;
+    redrawPins();
+  });
+  const redraw = () => {
+    redrawLooks();
+    redrawPins();
+  };
+  registerRefresh?.(redraw);
+  redraw();
 
   return h(
     "section",
@@ -305,6 +361,8 @@ export function mascotSection(
     h("div", { class: "row" }, h("label", { text: t("Size of the big mascot") }), mascotSize, mascotSizeValue),
     h("div", { class: "row" }, h("label", { text: t("Size of the small mascots") }), size, sizeValue),
     h("div", { class: "row" }, h("label", { text: t("Small mascots") }), display),
+    h("div", { class: "row" }, h("label", { text: t("Small agent mascots") }), miniMascotMode),
+    pins,
     h("h3", { text: t("Subagent colors") }),
     looks,
     h("div", { class: "row" }, addType, add),

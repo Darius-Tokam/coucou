@@ -110,6 +110,17 @@ Darius veut un endroit visuel pour changer de mascotte, sans repasser par le sé
 - **Erreurs** : un export invalide du dossier de mascottes n'apparaît pas, et son nom est noté dans le journal. Une application qui échoue affiche le message d'erreur d'import existant sous la vignette.
 - **Retirer** : un bouton « Retirer de la galerie » sur une vignette de la bibliothèque la supprime de la bibliothèque, sans toucher à la mascotte active.
 
+### Mascottes au hasard pour les petites (demande de Darius, 2026-11-16)
+
+- Le réglage « Mascottes des petites » propose « Celle du rôle » et « Au hasard dans la galerie ». « Celle du rôle » reste la valeur par défaut pour conserver le comportement existant.
+- En mode galerie, chaque session choisit avec la clé logique `project:<projet>` et chaque sous-agent avec `type:<type>`. Claude Code et Codex partagent donc le même choix pour un même projet ou type.
+- Le choix est déterministe : la liste admissible est triée, puis un hachage FNV-1a de la clé choisit le premier élément. Si cette mascotte est déjà utilisée par une autre mini visible, Coucou parcourt la liste jusqu'à une mascotte libre. Un doublon reste permis quand la galerie ne contient pas assez de mascottes.
+- Seuls les exports 3D et blob sont admissibles. Les vidéos sont exclues. Une galerie vide ou sans export admissible utilise la mascotte du rôle.
+- Les réglages gardent une épingle facultative par clé logique. Sa valeur est une référence `library:<id>` ou `folder:<id>` issue de la galerie validée. Une épingle valide passe avant le tirage. Une référence absente après un retrait ou un changement de dossier est ignorée et le tirage normal reprend.
+- Les projets déjà vus sont mémorisés avec les types de sous-agents déjà connus. Les Réglages présentent les deux listes et permettent de choisir « Au hasard » ou une mascotte admissible, avec son nom et son moteur.
+- Le look d'un type de sous-agent continue d'être envoyé à sa mascotte. Un blob utilise couleur, accessoire, yeux et joues ; les autres moteurs ignorent les attributs qu'ils ne prennent pas en charge.
+- Les minis chargent directement le `baseUrl` rendu par la galerie. Les chemins `/lib/<id>/` et `/dir/<id>/` restent soumis à `valid_id` et à la vérification de confinement existante. La pause, la résolution réduite et les autres limites de sobriété restent inchangées.
+
 ### Réglages
 
 Section « Mascotte », sous les deux exports : taille, affichage, « Couleurs des sous-agents » (une ligne par type connu : pastille de couleur, accessoire, yeux, joues ; les trois derniers grisés si l'export Claude Code ou Codex n'est pas un blob), un champ « Ajouter un type », « Remettre les mascottes en file ». Les types connus sont ceux déjà vus par Coucou, mémorisés dans les réglages.

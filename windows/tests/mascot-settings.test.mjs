@@ -116,6 +116,31 @@ test("new subagent types appear while settings stay open", () => {
   assert.match(section.textContent, /Review/);
 });
 
+test("the settings offer random gallery mascots and pins", () => {
+  const settings = {
+    islandAnchor: "corner",
+    mascotSize: 240,
+    miniSize: 120,
+    miniDisplay: "all",
+    miniMascotMode: "role",
+    miniMascotPins: {},
+    knownMiniProjects: ["questflow"],
+    subagentLooks: {},
+    knownSubagentTypes: ["Explore"],
+    miniPositions: {},
+  };
+  const section = mascotSection(() => settings, () => {});
+  const optionValues = section.find("OPTION").map((option) => option.getAttribute("value"));
+
+  assert.match(section.textContent, /Small agent mascots/);
+  assert.match(section.textContent, /Role mascot/);
+  assert.match(section.textContent, /Random from gallery/);
+  assert.match(section.textContent, /Project: questflow/);
+  assert.match(section.textContent, /Subagent type: Explore/);
+  assert.ok(optionValues.includes("role"));
+  assert.ok(optionValues.includes("gallery"));
+});
+
 test("a folder that isn't an export says so", () => {
   assert.equal(importErrorText("not_an_export"), "This folder doesn't hold a MascotForge export.");
 });

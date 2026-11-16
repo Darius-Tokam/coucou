@@ -1643,12 +1643,18 @@ export class Island {
 
   private syncAgentMascots(now: number) {
     agentMascots.tick(now);
+    State.settings.knownMiniProjects ??= [];
     const unknownTypes = agentMascots.list
       .filter((mascot) => mascot.subagent && mascot.type)
       .map((mascot) => mascot.type as string)
       .filter((type) => !State.settings.knownSubagentTypes.includes(type));
-    if (unknownTypes.length > 0) {
+    const unknownProjects = agentMascots.list
+      .filter((mascot) => !mascot.subagent)
+      .map((mascot) => mascot.project)
+      .filter((project) => !State.settings.knownMiniProjects.includes(project));
+    if (unknownTypes.length > 0 || unknownProjects.length > 0) {
       State.settings.knownSubagentTypes.push(...new Set(unknownTypes));
+      State.settings.knownMiniProjects.push(...new Set(unknownProjects));
       void Bridge.saveSettings(State.settings);
       State.notify();
     }

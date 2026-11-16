@@ -560,6 +560,9 @@ mod tests {
   "mascotFolder": "C:\\Mascots",
   "miniSize": 96.0,
   "miniDisplay": "sessions",
+  "miniMascotMode": "gallery",
+  "miniMascotPins": { "project:questflow": "library:orbi" },
+  "knownMiniProjects": ["questflow"],
   "subagentLooks": { "Explore": { "color": "#60A5FA", "accessory": "cap", "eyes": "round", "cheeks": "rose" } },
   "knownSubagentTypes": ["Explore"],
   "miniPositions": { "claude:type:Explore": { "x": 300.0, "y": 400.0 } }
@@ -654,6 +657,28 @@ mod tests {
         assert!(settings.subagent_looks.is_empty());
         assert!(settings.known_subagent_types.is_empty());
         assert!(settings.mini_positions.is_empty());
+    }
+
+    #[test]
+    fn random_mini_mascots_use_role_defaults() {
+        let settings = Settings::default();
+        assert_eq!(settings.mini_mascot_mode, "role");
+        assert!(settings.mini_mascot_pins.is_empty());
+        assert!(settings.known_mini_projects.is_empty());
+    }
+
+    #[test]
+    fn a_file_from_before_random_mini_mascots_uses_role_defaults() {
+        let mut old = custom().as_object().unwrap().clone();
+        for key in ["miniMascotMode", "miniMascotPins", "knownMiniProjects"] {
+            old.remove(key);
+        }
+        let loaded = parse(&serde_json::to_vec(&old).unwrap()).unwrap();
+
+        assert_eq!(loaded.mini_mascot_mode, "role");
+        assert!(loaded.mini_mascot_pins.is_empty());
+        assert!(loaded.known_mini_projects.is_empty());
+        assert_eq!(loaded.model, "some-model");
     }
 
     #[test]

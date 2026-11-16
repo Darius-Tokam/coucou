@@ -208,3 +208,22 @@
 - [ ] **Step 2:** Lancer `tests/agent-mascots.test.mjs` et `tests/subagent-card.test.mjs` : échec.
 - [ ] **Step 3:** Implémenter le modèle et le chemin unique de carte, sans modifier Rust ni la logique de surveillance.
 - [ ] **Step 4:** Tests TS ciblés, `npx tsc --noEmit` et `npx vite build` verts.
+
+### Task 14: Mascotte de galerie propre à chaque mini (ajout du 2026-11-16)
+
+**Files:** Modify `src-tauri/src/settings.rs`, `src-tauri/src/mascot.rs`, `src/core/state.ts`, `src/main.ts`, `src/island/island.ts`, `src/island/minis-view.ts`, `src/settings/mascot.ts`, `src/settings/mascot-gallery.ts`, `src/i18n/extra.json`, cette spec et ce plan. Create `src/mascot/mini-exports.ts`, `tests/mini-mascot-selection.test.mjs`. Modify `tests/mascot-settings.test.mjs`.
+
+**Interfaces:**
+- Réglages Rust et TS : `mini_mascot_mode: String` / `miniMascotMode: "role" | "gallery"` avec `"role"` par défaut ; `mini_mascot_pins: BTreeMap<String, String>` / `miniMascotPins: Record<string, string>` ; `known_mini_projects: Vec<String>` / `knownMiniProjects: string[]`.
+- `export function miniMascotSettingKey(m: AgentMascot): string` renvoie `project:<projet>` pour une session et `type:<type>` pour un sous-agent. La famille ne fait pas partie de la clé.
+- `export function galleryItemKey(item: MascotGalleryItem): string` renvoie `<source>:<id>`.
+- `export function miniExportsFor(list, gallery, choices, roles): readonly (MascotInfo | null)[]` dans `src/mascot/mini-exports.ts` : le mode `role` renvoie l'export Claude Code ou Codex ; le mode `gallery` ne garde que les moteurs `3d` et `blob`, déduplique un même `id`, trie les choix, applique une épingle valide, puis choisit avec FNV-1a et avance pour éviter les doublons visibles quand c'est possible. Une épingle absente ou une galerie sans export admissible retombe sur l'export du rôle.
+- `MinisView.setGallery(items)` conserve le dernier instantané de la galerie. Son rendu appelle `miniExportsFor` une seule fois pour la liste affichée et charge chaque case avec le résultat correspondant. Le look du sous-agent reste envoyé par `setLook`.
+- `Island.syncAgentMascots` ajoute chaque projet de session inconnu à `knownMiniProjects` et sauvegarde au plus une fois par synchronisation, comme pour `knownSubagentTypes`.
+- La galerie est rechargée au démarrage, après `mascot-changed`, après `mascot-gallery-changed` et après un changement de `mascotFolder`. `mascot_forget` émet `mascot-gallery-changed`.
+- Les Réglages montrent le mode puis, en mode galerie, un sélecteur par projet et par type connu. Les options sont « Au hasard » puis les exports 3D et blob sous la forme nom et moteur. Une valeur disparue est affichée comme « Au hasard ».
+
+- [ ] **Step 1: Tests Rust** dans `settings.rs` : `random_mini_mascots_use_role_defaults` ; `a_file_from_before_random_mini_mascots_uses_role_defaults` ; ajouter les trois clés au JSON complet qui vérifie la liste des réglages. Pousser seuls : CI rouge.
+- [ ] **Step 2: Tests TS** dans `mini-mascot-selection.test.mjs` : `the same project gets the same stable gallery mascot` ; `visible minis avoid duplicate gallery mascots when possible` ; `video mascots are excluded from minis` ; `a pin wins over the random gallery choice` ; `a missing pin falls back to the stable gallery choice` ; `an empty eligible gallery falls back to the role mascot` ; `role mode keeps the role mascot` ; `selection keys follow project or subagent type`. Ajouter `the settings offer random gallery mascots and pins` dans `mascot-settings.test.mjs`. Lancer : échec.
+- [ ] **Step 3:** Implémenter les réglages, le sélecteur pur, le chargement de galerie, les épingles et les chaînes dans les 13 langues.
+- [ ] **Step 4:** Tests TS ciblés, `npx tsc --noEmit` et `npx vite build` verts ; CI Rust verte.

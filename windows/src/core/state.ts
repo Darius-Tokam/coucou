@@ -14,6 +14,7 @@ import { DEFAULT_OUTFIT, type Outfit } from "../mochi/wardrobe";
 import { pillColor } from "./pill-colors";
 import { Spotify, musicPlaying } from "./spotify";
 import type { MiniDisplay } from "../mascot/agents";
+import type { MiniMascotMode } from "../mascot/mini-exports";
 
 export type AgentSource = "claudeCode" | "n8n" | "agent";
 export type PillBadge = "approval" | "finished" | "error";
@@ -125,6 +126,9 @@ export interface Settings {
   mascotFolder: string | null;
   miniSize: number;
   miniDisplay: MiniDisplay;
+  miniMascotMode: MiniMascotMode;
+  miniMascotPins: Record<string, string>;
+  knownMiniProjects: string[];
   subagentLooks: Record<string, SubagentLook>;
   knownSubagentTypes: string[];
   miniPositions: Record<string, { x: number; y: number }>;
@@ -207,6 +211,9 @@ export const DEFAULT_SETTINGS: Settings = {
   mascotFolder: null,
   miniSize: 120,
   miniDisplay: "all",
+  miniMascotMode: "role",
+  miniMascotPins: {},
+  knownMiniProjects: [],
   subagentLooks: {},
   knownSubagentTypes: [],
   miniPositions: {},

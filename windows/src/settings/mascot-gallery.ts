@@ -10,7 +10,7 @@ import { activeRoles, selectThumbnailIds, type CurrentMascots } from "./mascot-g
 
 export { activeRoles, selectThumbnailIds } from "./mascot-gallery-logic";
 
-function engineLabel(engine: MascotInfo["engine"]): string {
+export function engineLabel(engine: MascotInfo["engine"]): string {
   switch (engine) {
     case "3d": return t("3D");
     case "blob": return t("Blob");
@@ -25,6 +25,7 @@ function itemKey(item: MascotGalleryItem): string {
 export function mascotGallery(
   settings: () => Settings,
   save: () => void | Promise<void>,
+  onItems?: (items: readonly MascotGalleryItem[]) => void,
 ): HTMLElement {
   const grid = h("div", { class: "mascot-gallery-grid" });
   const folder = h("div", { class: "hint path" });
@@ -90,6 +91,7 @@ export function mascotGallery(
   };
 
   const render = (items: MascotGalleryItem[]) => {
+    onItems?.(items);
     disposePreviews();
     itemsByKey = new Map(items.map((item) => [itemKey(item), item]));
     order = items.map(itemKey);
