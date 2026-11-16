@@ -35,7 +35,7 @@ import { restoreAlertFocus } from "./hooks";
 import { DesktopLink } from "./desktop";
 import {
   CORNER_HOVER_CLOSE_S, CORNER_SUPPORTED, HoverStart, MASCOT_SIZE, clampMascotSize, cornerRects,
-  mascotClickAction, miniClickTarget, miniScreenRect, placeInPanel, subagentClickAction,
+  mascotClickAction, miniClickTarget, miniScreenRect, placeInPanel,
   subagentPanelPlacement,
 } from "./corner";
 import { CornerView } from "./corner-view";
@@ -162,8 +162,8 @@ export class Island {
   /** Corner mode: one hover per stay of the pointer on the folded mascot. */
   private cornerHover = new HoverStart();
   /** Physical screen rectangle of the mini that owns the open small card. */
-  private subagentAnchor: Rect | null = null;
-  private subagentPanelHeight = 200;
+  private miniCardAnchor: Rect | null = null;
+  private miniCardPanelHeight = 200;
   /** When a click on the corner mascot last opened or pinned the card (ms). */
   private cornerOpenedAt = -Infinity;
   /** The top island's hover close delay, put back when leaving corner mode. */
@@ -404,7 +404,7 @@ export class Island {
     this.views = buildViews(
       actions,
       () => this.animateGeometry(false),
-      (height) => this.setSubagentPanelHeight(height),
+      (height) => this.setMiniCardPanelHeight(height),
     );
     this.viewsEl = h("div", { id: "views" });
     for (const v of this.views.values()) this.viewsEl.append(v.el);
@@ -467,7 +467,6 @@ export class Island {
     });
     this.minis = new MinisView(this.root, {
       open: (mascot) => this.openMini(mascot),
-      more: () => this.clickMascot(),
       dragStart: () => {
         this.miniDragging = true;
         void Bridge.cornerMiniDrag(true);
@@ -590,7 +589,7 @@ export class Island {
   }
 
   expand(view: IslandViewName) {
-    if (view !== "subagent") this.closeSubagent();
+    if (view !== "subagent") this.closeMiniCard();
     this.stopSequenceIfLeaving(view);
     if (view !== "overview") closePlanCard();
     State.view = view;
@@ -601,7 +600,7 @@ export class Island {
   }
 
   setView(view: IslandViewName) {
-    if (view !== "subagent") this.closeSubagent();
+    if (view !== "subagent") this.closeMiniCard();
     this.stopSequenceIfLeaving(view);
     if (view !== "overview") closePlanCard();
     if (State.mode !== "expanded") {
@@ -624,7 +623,7 @@ export class Island {
       this.foldApproval();
       return;
     }
-    this.closeSubagent();
+    this.closeMiniCard();
     State.isPinned = false;
     this.fsm.pinned = false;
     // Drive the state machine rather than the mode: setting the mode behind its
@@ -952,8 +951,8 @@ export class Island {
     if (State.mode === "hidden" && this.closedShows) {
       return { w: this.closedW, h: CLOSED_H, r: 10 };
     }
-    if (State.mode === "expanded" && this.smallSubagentPanel) {
-      return { w: SUBAGENT_PANEL_W, h: this.subagentPanelHeight, r: 18 };
+    if (State.mode === "expanded" && this.smallMiniCard) {
+      return { w: SUBAGENT_PANEL_W, h: this.miniCardPanelHeight, r: 18 };
     }
     let { w, h } = islandSize(State.mode, State.view, State.chatHistory.length);
     if (State.mode === "expanded" && State.view === "question" && State.pendingApproval?.questions) {
@@ -963,13 +962,13 @@ export class Island {
     return { w, h, r };
   }
 
-  private setSubagentPanelHeight(height: number) {
+  private setMiniCardPanelHeight(height: number) {
     const max = this.cornerLayout?.panel?.h ?? SUBAGENT_PANEL_FALLBACK_MAX_H;
     const next = Math.min(max, Math.max(SUBAGENT_PANEL_MIN_H, Math.ceil(height)));
-    if (next === this.subagentPanelHeight) return;
-    const shrinking = next < this.subagentPanelHeight;
-    this.subagentPanelHeight = next;
-    if (this.smallSubagentPanel) this.animateGeometry(shrinking);
+    if (next === this.miniCardPanelHeight) return;
+    const shrinking = next < this.miniCardPanelHeight;
+    this.miniCardPanelHeight = next;
+    if (this.smallMiniCard) this.animateGeometry(shrinking);
   }
 
   private animateGeometry(shrinking: boolean) {
@@ -1024,7 +1023,7 @@ export class Island {
 
   /** Corner mode: the card beside the mascot, shown only while open; Rust hears what takes the mouse. */
   private applyCornerGeometry() {
-    const placement = this.subagentPlacement();
+    const placement = this.miniCardPlacement();
     const small = placement != null;
     this.islandEl.classList.toggle("subagent-popover", small);
     this.islandEl.classList.toggle("pointer-top", placement?.pointerSide === "top");
@@ -1053,17 +1052,17 @@ export class Island {
     if (this.cornerMode) {
       const visible = displayed(agentMascots.list, State.settings.miniDisplay);
       this.minis.render(visible, layout);
-      if (State.subagentKey != null && this.subagentAnchor != null) {
-        const index = visible.findIndex((mascot) => mascot.key === State.subagentKey);
+      if (State.miniCardKey != null && this.miniCardAnchor != null) {
+        const index = visible.findIndex((mascot) => mascot.key === State.miniCardKey);
         const anchor = index >= 0 ? miniScreenRect(layout, index) : null;
-        if (anchor && !sameRect(anchor, this.subagentAnchor)) {
-          this.subagentAnchor = anchor;
+        if (anchor && !sameRect(anchor, this.miniCardAnchor)) {
+          this.miniCardAnchor = anchor;
           void Bridge.cornerPanelAnchor(anchor);
         }
       }
     }
     this.applyGeometry();
-    if (this.smallSubagentPanel) this.views.get("subagent")?.sync();
+    if (this.smallMiniCard) this.views.get("subagent")?.sync();
     this.ensureRunning();
   }
 
@@ -1072,14 +1071,14 @@ export class Island {
     return CORNER_SUPPORTED && State.settings.islandAnchor === "corner";
   }
 
-  private get smallSubagentPanel(): boolean {
-    return this.cornerMode && State.view === "subagent" && State.subagentKey != null && this.subagentAnchor != null;
+  private get smallMiniCard(): boolean {
+    return this.cornerMode && State.view === "subagent" && State.miniCardKey != null && this.miniCardAnchor != null;
   }
 
-  private subagentPlacement() {
-    if (!this.smallSubagentPanel || !this.cornerLayout || !this.subagentAnchor) return null;
+  private miniCardPlacement() {
+    if (!this.smallMiniCard || !this.cornerLayout || !this.miniCardAnchor) return null;
     if (Math.abs((this.cornerLayout.panel?.w ?? 0) - SUBAGENT_PANEL_W) >= 0.5) return null;
-    return subagentPanelPlacement(this.cornerLayout, this.subagentAnchor, this.height.value);
+    return subagentPanelPlacement(this.cornerLayout, this.miniCardAnchor, this.height.value);
   }
 
   /** Corner mode folds the window to the mascot whenever the card isn't open. */
@@ -1096,12 +1095,12 @@ export class Island {
       open: State.mode === "expanded",
       pinned: this.fsm.pinned,
       approvalWaits: State.pendingApproval != null,
-      subagentCard: this.smallSubagentPanel,
+      miniCard: this.smallMiniCard,
       sinceOpenMs: now - this.cornerOpenedAt,
     });
     if (action === "none") return;
     if (action === "panel") {
-      this.closeSubagent();
+      this.closeMiniCard();
       this.cornerOpenedAt = now;
       this.fsm.pinned = true;
       State.isPinned = true;
@@ -1120,16 +1119,29 @@ export class Island {
     else this.fsm.forceHome();
   }
 
-  private openMini(mascot: AgentMascot) {
+  private openMini(mascot: AgentMascot | "more") {
     Sound.resume();
     const now = performance.now();
     State.lastActivity = now;
-    const target = miniClickTarget(mascot, State.pendingApproval != null);
-    if (target === "subagent") {
-      this.openSubagent(mascot.key);
+    const target = miniClickTarget(
+      mascot,
+      State.pendingApproval != null,
+      State.miniCardKey,
+      this.smallMiniCard,
+    );
+    if (target === "more") {
+      this.clickMascot();
       return;
     }
-    if (target === "session") State.setFocus(mascot.pillId);
+    if (target === "card") {
+      if (mascot === "more") return;
+      this.openMiniCard(mascot.key);
+      return;
+    }
+    if (target === "close") {
+      this.collapse();
+      return;
+    }
     this.cornerOpenedAt = now;
     this.fsm.pinned = true;
     State.isPinned = true;
@@ -1137,39 +1149,35 @@ export class Island {
     this.expand(target === "approval" ? State.defaultView() : "overview");
   }
 
-  openSubagent(key: string) {
+  openMiniCard(key: string) {
     const now = performance.now();
     State.lastActivity = now;
     this.cornerOpenedAt = now;
     this.fsm.pinned = true;
     State.isPinned = true;
     if (State.pendingApproval) {
-      this.closeSubagent();
+      this.closeMiniCard();
       this.fsm.forceHome();
       this.expand(State.defaultView());
       return;
     }
-    if (subagentClickAction(State.subagentKey, key, this.cornerMode) === "close") {
-      this.collapse();
-      return;
-    }
     // Opening goes through the default view (fsm "home" → expand), which
-    // closes any subagent card: the key is set only once that has happened.
+    // closes any mini card: the key is set only once that has happened.
     const layout = this.cornerLayout;
     const index = displayed(agentMascots.list, State.settings.miniDisplay)
       .findIndex((mascot) => mascot.key === key);
     const anchor = this.cornerMode && layout && index >= 0 ? miniScreenRect(layout, index) : null;
     this.fsm.forceHome();
-    this.subagentAnchor = anchor;
+    this.miniCardAnchor = anchor;
     void Bridge.cornerPanelAnchor(anchor);
-    State.subagentKey = key;
+    State.miniCardKey = key;
     this.expand("subagent");
   }
 
-  private closeSubagent() {
-    if (State.subagentKey == null) return;
-    State.subagentKey = null;
-    this.subagentAnchor = null;
+  private closeMiniCard() {
+    if (State.miniCardKey == null) return;
+    State.miniCardKey = null;
+    this.miniCardAnchor = null;
     void Bridge.cornerPanelAnchor(null);
     this.views?.get("subagent")?.sync();
   }
@@ -1179,7 +1187,7 @@ export class Island {
     const w = this.width.value;
     const hh = this.height.value;
     if (this.cornerMode) {
-      const placement = this.subagentPlacement();
+      const placement = this.miniCardPlacement();
       if (placement) return placement.rect;
       return (this.cornerLayout && placeInPanel(this.cornerLayout, w, hh)) ?? { x: -10_000, y: -10_000, w: 0, h: 0 };
     }
@@ -1904,7 +1912,7 @@ export class Island {
 
   /** A MascotForge mascot is in the corner: the panel shows no Mochi. */
   private get mascotReplacesMochi(): boolean {
-    return this.cornerMode && (this.corner.mascotActive || this.smallSubagentPanel);
+    return this.cornerMode && (this.corner.mascotActive || this.smallMiniCard);
   }
 
   /** The clock sits in the middle of the compact island, where the notch is on a Mac. */

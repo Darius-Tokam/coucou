@@ -28,23 +28,15 @@ export function mascotClickAction(s: {
   open: boolean;
   pinned: boolean;
   approvalWaits: boolean;
-  subagentCard?: boolean;
+  miniCard?: boolean;
   /** Since the click that opened the card; unknown counts as long ago. */
   sinceOpenMs?: number;
 }): MascotClick {
-  if (s.subagentCard && !s.approvalWaits) return "panel";
+  if (s.miniCard && !s.approvalWaits) return "panel";
   if (!s.open) return "open";
   if (!s.pinned) return "pin";
   if (s.approvalWaits || (s.sinceOpenMs ?? Infinity) < DOUBLE_CLICK_MS) return "none";
   return "close";
-}
-
-export function subagentClickAction(
-  openKey: string | null,
-  clickedKey: string,
-  smallPanel: boolean,
-): "open" | "close" {
-  return smallPanel && openKey === clickedKey ? "close" : "open";
 }
 
 export function miniClickAction(s: {
@@ -57,11 +49,15 @@ export function miniClickAction(s: {
 }
 
 export function miniClickTarget(
-  mascot: AgentMascot,
+  mascot: AgentMascot | "more",
   approvalWaits: boolean,
-): "approval" | "subagent" | "session" {
+  openKey: string | null = null,
+  smallPanel = false,
+): "approval" | "card" | "close" | "more" {
+  if (mascot === "more") return "more";
   if (approvalWaits) return "approval";
-  return mascot.subagent ? "subagent" : "session";
+  if (smallPanel && openKey === mascot.key) return "close";
+  return "card";
 }
 
 /** The cursor (window-logical) in the mascot's own coordinates, and whether it is on it. */

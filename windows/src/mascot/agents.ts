@@ -192,11 +192,11 @@ export class AgentMascots {
       changed = true;
     }
 
-    if (subagent && e.step != null) {
+    if (e.step != null) {
       mascot.steps = [...mascot.steps, e.step].slice(-MAX_STEPS);
       changed = true;
     }
-    if (subagent && e.finalText != null && mascot.finalText !== e.finalText) {
+    if (e.finalText != null && mascot.finalText !== e.finalText) {
       mascot.finalText = e.finalText;
       changed = true;
     }

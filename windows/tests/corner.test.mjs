@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   CORNER_HOVER_CLOSE_S, clampMascotSize, cornerRects, mascotClickAction, miniScreenRect,
-  placeInPanel, subagentClickAction, subagentPanelPlacement,
+  placeInPanel, subagentPanelPlacement,
 } from "../src/island/corner.ts";
 
 // Mascot bottom-right of the screen: the panel area is on its left, bottom-aligned.
@@ -88,18 +88,12 @@ test("the small subagent card points at its mini from below", () => {
   });
 });
 
-test("clicking the open subagent mini closes its small card", () => {
-  assert.equal(subagentClickAction("claude:s1:a1", "claude:s1:a1", true), "close");
-  assert.equal(subagentClickAction("claude:s1:a1", "claude:s1:a2", true), "open");
-  assert.equal(subagentClickAction("claude:s1:a1", "claude:s1:a1", false), "open");
-});
-
-test("the big mascot replaces a small subagent card with the big panel", () => {
+test("the big mascot replaces a small mini card with the big panel", () => {
   assert.equal(mascotClickAction({
     open: true,
     pinned: true,
     approvalWaits: false,
-    subagentCard: true,
+    miniCard: true,
   }), "panel");
 });
 

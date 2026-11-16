@@ -218,6 +218,14 @@ test("a subagent keeps its own steps", () => {
   assert.deepEqual(mascots.list[1].steps, ["Reads \u00b7 one.ts", "Searches \u00b7 mascot"]);
 });
 
+test("a session keeps its own steps", () => {
+  mascots.apply(event("SessionStart"), 1000);
+  mascots.apply(event("PreToolUse", { tool_name: "Read" }, "Reads \u00b7 one.ts"), 1001);
+  mascots.apply(event("PreToolUse", { tool_name: "Grep" }, "Searches \u00b7 mascot"), 1002);
+
+  assert.deepEqual(mascots.list[0].steps, ["Reads \u00b7 one.ts", "Searches \u00b7 mascot"]);
+});
+
 test("steps stop at fifty", () => {
   mascots.apply(event("SubagentStart", { agent_id: "a1", agent_type: "Explore" }), 1000);
   for (let i = 0; i < 60; i++) {
@@ -242,6 +250,30 @@ test("a subagent keeps its final answer", () => {
   }), 1001);
 
   assert.equal(mascots.list[0].finalText, "The answer is ready.");
+});
+
+test("a Claude Code session keeps its final answer", () => {
+  mascots.apply(event("SessionStart"), 1000);
+  mascots.apply(event("Stop", {
+    last_assistant_message: "Claude finished the task.",
+  }), 1001);
+
+  assert.equal(mascots.list[0].finalText, "Claude finished the task.");
+});
+
+test("a Codex session keeps its final answer", () => {
+  const codex = (name, extra = {}) => agentEventFrom({
+    hook_event_name: name,
+    session_id: "c1",
+    coucou_agent: "codex",
+    ...extra,
+  }, "agent_codex", "text-to-mascot", null);
+  mascots.apply(codex("SessionStart"), 1000);
+  mascots.apply(codex("Stop", {
+    last_assistant_message: "Codex finished the task.",
+  }), 1001);
+
+  assert.equal(mascots.list[0].finalText, "Codex finished the task.");
 });
 
 test("a subagent knows its parent", () => {

@@ -178,6 +178,8 @@
 
 ### Task 12: Petit panneau propre à chaque sous-agent (ajout du 2026-11-15)
 
+> Généralisée par la tâche 13 : la même carte sert maintenant chaque mini.
+
 **Files:** Modify `src-tauri/src/island.rs` (`corner_layout`, `apply_corner`, `corner_tests`), `src/island/corner.ts`, `src/island/island.ts`, `src/views/subagent.ts`, `src/views/subagent-card.ts`, `src/views/views.ts`, `src/style.css`, `tests/corner.test.mjs`, `tests/subagent-card.test.mjs`, cette spec et ce plan.
 
 **Interfaces:**
@@ -190,3 +192,19 @@
 - [ ] **Step 2: Tests TS** : `the small subagent card points at its mini from above` ; `the small subagent card points at its mini from below` ; `clicking the open subagent mini closes its small card` ; `the big mascot replaces a small subagent card with the big panel` ; `the card keeps every step for its scrolling list and the answer`. Lancer : échec.
 - [ ] **Step 3:** Implémenter Rust et page, sans changer le grand panneau ni le mode haut.
 - [ ] **Step 4:** Tests TS, `npx tsc --noEmit`, `npx vite build` verts ; CI Rust verte.
+
+### Task 13: Petit panneau pour chaque mini (ajout du 2026-11-15)
+
+**Files:** Modify `src/mascot/agents.ts`, `src/island/corner.ts`, `src/island/minis-view.ts`, `src/island/island.ts`, `src/core/state.ts`, `src/views/subagent.ts`, `src/views/subagent-card.ts`, `tests/agent-mascots.test.mjs`, `tests/subagent-card.test.mjs`, cette spec et ce plan.
+
+**Interfaces:**
+- `AgentMascots` garde les étapes et `last_assistant_message` pour les sessions comme pour les sous-agents. Le plafond reste de 50 étapes par mascotte.
+- `miniClickTarget(mascot, approvalWaits, openKey, smallPanel): "approval" | "card" | "close" | "more"` accepte une `AgentMascot` ou `"more"`. Une attente ouvre le grand panneau ; une mini ordinaire ouvre sa carte ; la mini déjà ouverte ferme sa carte ; `"more"` conserve son action. Cette décision remplace `subagentClickAction`.
+- `MiniHandlers.open` accepte une mascotte ou `"more"`, afin que toutes les cases passent par une seule décision de clic.
+- La vue `"subagent"` reste l'unique vue de carte. Pour une session, son titre est `"Claude Code"` ou `"Codex"`, sa couleur vient de son onglet, et le projet, les étapes et la réponse finale viennent de sa propre `AgentMascot`.
+- `Island.openMiniCard(key)` utilise l'ancre et la carte de 320 px existantes pour les sessions et les sous-agents. Le bouton « Ouvrir la session » appelle `openPill(pillId)`. Rust et `corner_layout` ne changent pas.
+
+- [ ] **Step 1: Tests TS** : `a session keeps its own steps` ; `a Claude Code session keeps its final answer` ; `a Codex session keeps its final answer` ; `clicking a subagent opens its card` ; `clicking a session opens its card` ; `a waiting approval wins` ; `the grouped mini keeps its current action` ; `a session card shows its agent, project, steps and final answer` ; `clicking the open session mini closes its small card`.
+- [ ] **Step 2:** Lancer `tests/agent-mascots.test.mjs` et `tests/subagent-card.test.mjs` : échec.
+- [ ] **Step 3:** Implémenter le modèle et le chemin unique de carte, sans modifier Rust ni la logique de surveillance.
+- [ ] **Step 4:** Tests TS ciblés, `npx tsc --noEmit` et `npx vite build` verts.

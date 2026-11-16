@@ -12,7 +12,7 @@ export interface SubagentCard {
 
 export function subagentCard(mascot: AgentMascot, color: string): SubagentCard {
   return {
-    title: mascot.label,
+    title: mascot.subagent ? mascot.label : mascot.family === "codex" ? "Codex" : "Claude Code",
     color,
     state: mascot.state,
     project: mascot.project,

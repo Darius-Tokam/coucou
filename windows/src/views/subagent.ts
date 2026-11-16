@@ -51,7 +51,7 @@ export function buildSubagent(
   return {
     el,
     sync() {
-      const key = State.subagentKey;
+      const key = State.miniCardKey;
       if (key !== shownKey) {
         shownKey = key;
         snapshot = null;
@@ -64,10 +64,11 @@ export function buildSubagent(
       const live = agentMascots.list.find((mascot) => mascot.key === key);
       if (live) snapshot = copyMascot(live);
       if (!snapshot) return;
-      const color = snapshot.type
-        ? colorForType(snapshot.type, State.settings.subagentLooks)
-        : "#9398a1";
-      const card = subagentCard(snapshot, color);
+      const mascot = snapshot;
+      const color = mascot.subagent
+        ? colorForType(mascot.type ?? "", State.settings.subagentLooks)
+        : State.tasks.find((task) => task.id === mascot.pillId)?.color ?? "#9398a1";
+      const card = subagentCard(mascot, color);
       const renderKey = JSON.stringify(card);
       if (renderKey === rendered) {
         reportHeight();

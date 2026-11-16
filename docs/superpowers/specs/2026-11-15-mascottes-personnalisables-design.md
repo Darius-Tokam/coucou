@@ -71,24 +71,24 @@ Les petites mascottes existent, mais toutes les mascottes de sous-agents se ress
 - `corner_layout` reçoit, pour chaque case, soit « dans la file », soit sa position écran ; la fenêtre est le rectangle englobant de la grande, de la file, des mascottes posées et du panneau ; les mascottes posées hors zone de travail y sont ramenées.
 - Le panneau garde sa règle actuelle (au-dessus du groupe grande + file) et passe au-dessus des mascottes posées.
 
-### Clic sur un sous-agent : sa propre fiche (demande de Darius, 2026-11-15)
+### Clic sur une mini : sa propre fiche (demande de Darius, 2026-11-15)
 
-- Un clic sur la petite mascotte d'un sous-agent ouvre le panneau sur **la fiche de ce sous-agent**, pas sur l'onglet de sa session parente.
-- La fiche montre : son type (« Explore ») avec sa couleur, son état, le projet de la session parente, la liste de ses propres étapes (chaque outil qu'il a lancé, au même format que les étapes d'un onglet), et sa réponse finale quand il a fini (`last_assistant_message` de `SubagentStop`, présent chez Codex, à vérifier chez Claude Code).
-- Un lien « Session » sur la fiche ouvre l'onglet parent.
-- Les étapes sont gardées dans le modèle des mascottes (`agents.ts`), par sous-agent, 50 au plus, et partent avec lui.
-- Une autorisation demandée par ce sous-agent garde la priorité : si elle attend, le clic montre la carte d'autorisation, comme aujourd'hui.
-- Un clic sur la mascotte d'une session ouvre toujours l'onglet de sa session.
+- Un clic sur une petite mascotte ouvre sa propre fiche. Un sous-agent montre son type ; une session montre son agent, Claude Code ou Codex, et son projet.
+- La fiche montre la couleur, l'état, le projet, les étapes propres à cette mascotte et sa réponse finale. Les sessions lisent `last_assistant_message` de `Stop` ; les sous-agents lisent celui de `SubagentStop`.
+- Un lien « Ouvrir la session » ouvre le grand panneau sur l'onglet de la session concernée.
+- Les étapes sont gardées dans le modèle des mascottes (`agents.ts`), par mascotte, 50 au plus, et partent avec elle.
+- Une autorisation ou une question en attente garde la priorité : le clic ouvre le grand panneau sur la carte qui demande une réponse.
+- La case groupée « +N » garde le comportement du clic sur la grande mascotte.
 
-### Petit panneau du sous-agent
+### Petit panneau de chaque mini
 
-- Un clic sur une petite mascotte de sous-agent ouvre sa fiche dans une carte dédiée de 320 px de large. Cette carte n'affiche ni l'en-tête ni les onglets du grand panneau.
+- Un clic sur une petite mascotte de session ou de sous-agent ouvre sa fiche dans une carte dédiée de 320 px de large. Cette carte n'affiche ni l'en-tête ni les onglets du grand panneau.
 - Rust réserve une zone d'au plus 320 x 300 px. La page mesure le contenu et réduit la hauteur réelle de la carte dans cette zone. La liste des étapes défile si elle atteint la hauteur maximale ; la réponse finale tient sur quatre lignes au plus.
 - La carte est centrée horizontalement sur la petite mascotte et séparée d'elle par `MINI_GAP`. Elle s'ouvre au-dessus dans la moitié basse de la zone de travail, et en dessous dans la moitié haute ou quand elle ne tient pas au-dessus. Elle reste entièrement dans la zone de travail.
 - Une pointe sur le bord supérieur ou inférieur vise le centre de la petite mascotte. Près d'un bord d'écran, la carte se décale tandis que la pointe reste face à la mascotte.
 - La règle vaut pour une mascotte dans la file et une mascotte posée librement. La carte passe devant les autres petites mascottes et peut les recouvrir.
 - Cliquer une autre petite mascotte déplace la carte et remplace son contenu. Recliquer la même petite mascotte ferme la carte.
-- Si le sous-agent part pendant que sa fiche est ouverte, la copie de ses données et l'ancre restent jusqu'à la fermeture.
+- Si la mascotte part pendant que sa fiche est ouverte, la copie de ses données et l'ancre restent jusqu'à la fermeture.
 - Un clic sur la grande mascotte efface l'ancre et ouvre le grand panneau de 720 x 320 px avec son en-tête et ses onglets. Toutes les autres vues gardent ce grand panneau.
 - Hors mode coin, la fiche garde son comportement actuel dans le grand panneau.
 

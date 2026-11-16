@@ -17,6 +17,20 @@ const subagent = {
   parentKey: "claude:s1",
 };
 
+const session = {
+  key: "claude:s1",
+  family: "claude",
+  pillId: "integration_claude",
+  label: "questflow",
+  subagent: false,
+  state: "working",
+  type: null,
+  project: "questflow",
+  steps: ["Reads \u00b7 brief.md", "Runs \u00b7 tests"],
+  finalText: "The session answer is ready.",
+  parentKey: null,
+};
+
 test("the card keeps every step for its scrolling list and the answer", () => {
   assert.deepEqual(subagentCard(subagent, "#123456"), {
     title: "Explore",
@@ -29,13 +43,34 @@ test("the card keeps every step for its scrolling list and the answer", () => {
 });
 
 test("clicking a subagent opens its card", () => {
-  assert.equal(miniClickTarget(subagent, false), "subagent");
+  assert.equal(miniClickTarget(subagent, false), "card");
 });
 
 test("a waiting approval wins", () => {
-  assert.equal(miniClickTarget(subagent, true), "approval");
+  assert.equal(miniClickTarget(session, true), "approval");
 });
 
-test("clicking a session opens its tab", () => {
-  assert.equal(miniClickTarget({ ...subagent, subagent: false }, false), "session");
+test("clicking a session opens its card", () => {
+  assert.equal(miniClickTarget(session, false), "card");
+});
+
+test("the grouped mini keeps its current action", () => {
+  assert.equal(miniClickTarget("more", false), "more");
+});
+
+test("a session card shows its agent, project, steps and final answer", () => {
+  assert.deepEqual(subagentCard(session, "#60A5FA"), {
+    title: "Claude Code",
+    color: "#60A5FA",
+    state: "working",
+    project: "questflow",
+    steps: ["Reads \u00b7 brief.md", "Runs \u00b7 tests"],
+    finalText: "The session answer is ready.",
+  });
+});
+
+test("clicking the open session mini closes its small card", () => {
+  assert.equal(miniClickTarget(session, false, session.key, true), "close");
+  assert.equal(miniClickTarget(session, false, "claude:s2", true), "card");
+  assert.equal(miniClickTarget(session, false, session.key, false), "card");
 });

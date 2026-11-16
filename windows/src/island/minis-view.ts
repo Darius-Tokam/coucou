@@ -11,8 +11,7 @@ import { miniDragCancellation, type MiniDragCancelReason } from "./mini-drag";
 import { MochiCanvas } from "./mochi-canvas";
 
 export interface MiniHandlers {
-  open(mascot: AgentMascot): void;
-  more(): void;
+  open(mascot: AgentMascot | "more"): void;
   dragStart(): void;
   dragEnd(mascot: AgentMascot, at: { x: number; y: number }): Promise<void>;
   dragCancel(): void;
@@ -343,7 +342,7 @@ export class MinisView {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "mini-more";
-    button.addEventListener("click", () => this.handlers.more());
+    button.addEventListener("click", () => this.handlers.open("more"));
     this.root.append(button);
     return button;
   }
