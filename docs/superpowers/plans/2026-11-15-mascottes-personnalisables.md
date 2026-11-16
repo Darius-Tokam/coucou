@@ -1,0 +1,229 @@
+# Petites mascottes colorées, réglables, déplaçables, avec fiche de sous-agent : plan d'implémentation
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Les petites mascottes de sous-agents prennent la couleur de leur type, se règlent (taille, look, affichage), se posent n'importe où à l'écran une par une, et un clic sur un sous-agent ouvre sa propre fiche.
+
+**Architecture:** Le modèle pur `src/mascot/agents.ts` gagne les étapes et la réponse finale de chaque sous-agent, la couleur par type et les clés de position. La page envoie à Rust une liste de cases (taille, position posée ou file) au lieu d'un nombre ; `corner_layout` les place et la fenêtre devient la zone de travail entière pendant un glisser. L'iframe reçoit un message `look` qu'elle traduit en attributs publics des moteurs. Une nouvelle vue du panneau, `subagent`, montre la fiche.
+
+**Tech Stack:** Tauri 2 (Rust), TypeScript strict, Vite 6, `node:test`, `cargo test`, GitHub Actions.
+
+**Spec:** `docs/superpowers/specs/2026-11-15-mascottes-personnalisables-design.md`
+
+## Global Constraints
+
+- Branche `dan-lion` du fork `Darius-Tokam/coucou`. Jamais de commit sur `main`, jamais de push vers `Louis-CFM/coucou`.
+- Chemins relatifs à `windows/`.
+- TypeScript strict : `noUnusedLocals`, `noUnusedParameters`, `verbatimModuleSyntax`.
+- Ne pas toucher à `hook/` ni aux règles d'autorisation de `hooks.ts`.
+- Aucun secret, aucun em-dash (U+2014) dans le code, les chaînes, les commits.
+- Chaînes visibles : clé anglaise dans `t()`, 13 langues dans `src/i18n/extra.json` (`zh-Hans, hi, es, ar, fr, bn, pt-BR, ru, id, de, tr, ko, ja`).
+- Tout bouton : retour à l'appui, état désactivé pendant une action asynchrone, échec visible, `:focus-visible`.
+- Valeurs de la spec : taille des petites 60 à 120 px, 120 par défaut ; sous-agents à 75 % de cette taille ; 8 couleurs par défaut ; 50 étapes au plus par sous-agent ; décalage d'un second du même type : la moitié de sa taille vers le centre.
+- Pas de compilation Rust locale (disque) : tests Rust poussés seuls d'abord (CI rouge), puis le code (CI verte). Tests TS en local : `node --experimental-strip-types --no-warnings --test tests/<f>.test.mjs`.
+- Ne jamais modifier les fichiers d'un export : la couleur et le look passent par les attributs publics des moteurs, depuis `FRAME_HTML`.
+
+## Review Focus
+
+1. Deux sous-agents du même type vivants en même temps, dont le type a une position posée : le second est décalé, aucun n'est caché (test tâche 5).
+2. Une position enregistrée hors de la zone de travail actuelle (écran plus petit, résolution changée) : la mascotte est ramenée à l'écran (test tâche 3).
+3. Un clic sur un sous-agent qui attend une autorisation : la carte d'autorisation reste au premier plan (test tâche 6).
+4. Un type de sous-agent jamais vu : couleur stable tirée de la palette, la même à chaque fois (test tâche 1).
+5. Affichage « sessions seulement » : aucune case de sous-agent n'est envoyée à Rust, et la fenêtre rétrécit (test tâche 5).
+
+---
+
+### Task 1: Le modèle (TS pur)
+
+**Files:** Modify `src/mascot/agents.ts`, `src/island/hooks.ts` (deux lignes de l'appel existant), `tests/agent-mascots.test.mjs`.
+
+**Interfaces:**
+- `agentEventFrom(p, pillId, project, step: string | null)` : `step` vient de `stepLabel(tool, input)` (déjà dans `hooks.ts`) pour un `PreToolUse`, `null` sinon. `p` gagne `last_assistant_message?: string`.
+- `AgentEvent` gagne `step: string | null; finalText: string | null`.
+- `AgentMascot` gagne `type: string | null; project: string; steps: readonly string[]; finalText: string | null; parentKey: string | null`.
+- `export const MINI_COLORS: readonly string[]` (8 couleurs lisibles sur fond sombre).
+- `export function colorForType(type: string, overrides: Readonly<Record<string, { color?: string | null }>>): string` : la couleur réglée, sinon `MINI_COLORS[hash(type) % 8]` avec un hachage stable (FNV-1a 32 bits sur le nom).
+- `export function positionKey(m: AgentMascot): string` : `"<famille>:type:<type>"` pour un sous-agent, `"<famille>:project:<projet>"` pour une session.
+- `export type MiniDisplay = "all" | "sessions" | "none";` et `export function displayed(list: readonly AgentMascot[], mode: MiniDisplay): readonly AgentMascot[]`.
+
+- [ ] **Step 1: Tests** : `a subagent keeps its own steps` (deux `PreToolUse` avec `agent_id` : 2 étapes sur le sous-agent, aucune sur la session) ; `steps stop at fifty` (60 étapes : les 50 dernières) ; `a subagent keeps its final answer` (`SubagentStop` avec `last_assistant_message` : `finalText`) ; `a subagent knows its parent` (`parentKey === "claude:s1"`) ; `an unknown type always gets the same color` (deux appels, même couleur, et elle est dans `MINI_COLORS`) ; `a chosen color wins` ; `position keys follow type or project` ; `sessions only hides subagents` ; `none hides everything`.
+- [ ] **Step 2:** Lancer `tests/agent-mascots.test.mjs` : échec.
+- [ ] **Step 3:** Implémenter ; `hooks.ts` passe `stepLabel(...)` pour `PreToolUse`, `null` sinon.
+- [ ] **Step 4:** Les tests passent ; `npx tsc --noEmit` passe.
+
+### Task 2: Réglages persistés (Rust + TS)
+
+**Files:** Modify `src-tauri/src/settings.rs` (struct, défauts, tests de clés), `src/core/state.ts` (`Settings`, `DEFAULT_SETTINGS`).
+
+**Interfaces:**
+- Rust, dans `Settings` (sérialisé en camelCase comme les autres) : `mini_size: f64` (120.0), `mini_display: String` (`"all"`), `subagent_looks: BTreeMap<String, SubagentLook>`, `known_subagent_types: Vec<String>`, `mini_positions: BTreeMap<String, CornerPos>` (pixels physiques écran). `SubagentLook { color: Option<String>, accessory: Option<String>, eyes: Option<String>, cheeks: Option<String> }`. Ces champs appartiennent à la page (sauvegardés par `save_settings` comme les réglages ordinaires).
+- TS : mêmes champs dans `Settings` (`miniSize`, `miniDisplay`, `subagentLooks`, `knownSubagentTypes`, `miniPositions`).
+
+- [ ] **Step 1: Tests Rust** dans `settings.rs` : défauts ; un JSON sans ces clés se lit avec les défauts ; mise à jour du test qui liste les clés. Pousser seuls : CI rouge.
+- [ ] **Step 2:** Implémenter ; CI verte.
+
+### Task 3: Cases de tailles variées, posées ou en file (Rust)
+
+**Files:** Modify `src-tauri/src/island.rs` (`corner_layout`, `apply_corner`, `corner_tests`), `src-tauri/src/lib.rs` (commandes), `src/core/bridge.ts`.
+
+**Interfaces:**
+- `#[derive(Deserialize, Clone, Copy, Debug, PartialEq)] pub struct MiniSlot { pub size: f64, pub at: Option<(f64, f64)> }` (`size` logique, `at` coin haut-gauche en pixels physiques écran, `None` : dans la file).
+- `corner_layout(work, scale, mascot_at, panel, minis: &[MiniSlot], dragging: bool) -> CornerLayout` ; `CornerLayout` gagne `scale: f64`.
+- La file contient les cases `at == None` dans l'ordre reçu, avec leur taille, alignées comme aujourd'hui (en bas si la grande est dans la moitié basse). Les cases posées sont ramenées dans la zone de travail. `dragging == true` : la fenêtre vaut la zone de travail entière. Sinon, la fenêtre est le rectangle englobant de tout ce qui est dessiné. Avec des cases toutes en file et de taille 120, le résultat est identique à aujourd'hui (les anciens tests le vérifient).
+- Commandes : `set_corner_minis(app, shared, slots: Vec<MiniSlot>)` remplace l'ancienne (`count`) ; `corner_mini_drag(app, shared, on: bool)` range un `static CORNER_MINI_DRAG: AtomicBool` puis refait la géométrie.
+- TS : `export interface MiniSlot { size: number; at: [number, number] | null }` ; `Bridge.setCornerMinis(slots: MiniSlot[])`, `Bridge.cornerMiniDrag(on: boolean)`.
+
+- [ ] **Step 1: Tests Rust** : `mixed_sizes_line_up_bottom_aligned` (une case 120 et une 90 en file, grande à la maison sur 1920 x 1040 : bas des deux cases à `y = 1024` à l'écran) ; `a placed mini sets the window bounds` (case posée en `(16, 16)` : la fenêtre va de `(16, 16)` à `(1904, 1024)`, la grande reste en `(1664, 784)` à l'écran) ; `a mini placed off screen comes back` (case posée en `(5000, 5000)` : dans la zone de travail) ; `dragging covers the work area` (`dragging = true` : `window == WORK`) ; anciens appels adaptés (`&[MiniSlot { size: 120.0, at: None }; n]`, `false`). Pousser seuls : CI rouge.
+- [ ] **Step 2:** Implémenter, adapter la page à la nouvelle commande (tâche 5 s'en sert) ; CI verte.
+
+### Task 4: Couleur et look dans l'iframe
+
+**Files:** Modify `src-tauri/src/mascot.rs` (`MascotInfo`, `read_export`, `FRAME_HTML`, tests), `src/mascot/protocol.ts`, `src/mascot/host.ts`, `tests/mascot-host.test.mjs`.
+
+**Interfaces:**
+- `MascotInfo.tint_material: Option<String>` (JSON `tintMaterial`) : la première clé de `engine_spec.materials` d'un export 3D, sinon `None`.
+- `HostMessage` gagne `{ type: "look"; color: string | null; material: string | null; accessory: string | null; eyes: string | null; cheeks: string | null }`.
+- `MascotHost.setLook(look: Omit<Extract<HostMessage, { type: "look" }>, "type"> | null)` : n'envoie que si ça change, rejoue après `ready`.
+- `FRAME_HTML` : 3D, attribut `palette` = `"<material>:<color>"` (retiré si `color` ou `material` est `null`) ; blob, attributs `color`, `accessory`, `eyes`, `cheeks` posés, ou retirés si `null`. Accepté seulement depuis `window.parent`.
+
+- [ ] **Step 1: Tests Rust** : `a 3d export names its tint material` (manifeste 3D avec `engine_spec.materials` `{ "shell": {...}, "lilac": {...} }` : `Some("shell")`) ; `a blob export has no tint material` ; `the frame page applies a look` (la page contient `data.type === "look"` et `"palette"`). Pousser seuls : CI rouge.
+- [ ] **Step 2: Tests TS** : `setLook sends once per change` ; `setLook is replayed when ready`. Lancer : échec.
+- [ ] **Step 3:** Implémenter ; tests TS verts ; CI verte.
+- [ ] **Step 4: Vérification manuelle prévue en tâche 8** : changer `palette` à chaud ne doit pas casser le personnage 3D (contrairement à `framing`).
+
+### Task 5: Petites mascottes : tailles, couleurs, affichage, glisser
+
+**Files:** Modify `src/island/minis-view.ts`, `src/island/island.ts`, `src/mascot/agents.ts`, `src/style.css`, `tests/agent-mascots.test.mjs`.
+
+**Interfaces:**
+- `export function placementFor(m: AgentMascot, live: readonly AgentMascot[], positions: Readonly<Record<string, { x: number; y: number }>>, sizePx: number, towardLeft: boolean): [number, number] | null` dans `agents.ts` (`sizePx` en pixels physiques : taille logique de la case fois `layout.scale`, comme les positions) : la position enregistrée pour `positionKey(m)`, décalée de `sizePx / 2` vers le centre (`towardLeft`) pour chaque mascotte vivante plus ancienne de même clé ; `null` sans position.
+- L'île construit les `MiniSlot` : `displayed(list, settings.miniDisplay)`, les 8 premières plus « +N », taille `miniSize` pour une session et `miniSize * 0.75` pour un sous-agent, `at` d'après `placementFor`. Elle n'appelle `setCornerMinis` que si la liste change.
+- `MinisView` : chaque case prend sa taille du layout ; la pastille et le look d'un sous-agent viennent de `colorForType` et de `settings.subagentLooks[type]` (`host.setLook`) ; une session garde la couleur de son onglet et aucun look.
+- Glisser une case : au-delà de `DRAG_THRESHOLD`, `Bridge.cornerMiniDrag(true)` ; la case suit le pointeur (`setPointerCapture`) dans la fenêtre devenue zone de travail ; au relâcher, position écran physique = `layout.window.x + x * layout.scale` (idem `y`), enregistrée dans `settings.miniPositions[positionKey(m)]`, réglages sauvés, `Bridge.cornerMiniDrag(false)`. Double-clic : la clé est retirée, la case revient en file. La grande mascotte garde son glisser actuel.
+- À chaque `SubagentStart` d'un type inconnu, il est ajouté à `settings.knownSubagentTypes` et sauvé.
+
+- [ ] **Step 1: Tests** : `a placed type comes back to its place` ; `a second one of the same type is shifted toward the centre` (deux vivantes même clé : la seconde décalée de `sizePx / 2`) ; `sessions only sends no subagent slot` (fonction pure qui construit les slots, à exporter : `slotsFor(list, settings, towardLeft): MiniSlot[]`).
+- [ ] **Step 2:** Lancer : échec. **Step 3:** Implémenter. **Step 4:** Tests, `tsc`, `vite build` verts.
+
+### Task 6: Fiche de sous-agent
+
+**Files:** Create `src/views/subagent.ts`, `tests/subagent-card.test.mjs`. Modify `src/core/layout.ts` (`IslandViewName`, `VIEW_LAYOUTS`), `src/views/views.ts` (`buildViews`), `src/core/state.ts` (`subagentKey: string | null`), `src/island/island.ts` (`openSubagent`), `src/island/corner.ts`, `src/i18n/extra.json`.
+
+**Interfaces:**
+- Vue `"subagent"`, hauteur 200, `agentMode: "none"`.
+- `export function subagentCard(m: AgentMascot, color: string): { title: string; color: string; state: BotStateName; project: string; steps: readonly string[]; finalText: string | null }` (les 6 dernières étapes) dans `src/views/subagent.ts`, et `buildSubagent(actions): ViewHost` qui l'affiche, avec un bouton « Session » (`actions` gagne `openPill(pillId: string): void`).
+- `export function miniClickTarget(m: AgentMascot, approvalWaits: boolean): "approval" | "subagent" | "session"` dans `corner.ts`.
+- `Island.openSubagent(key)` : `State.subagentKey = key`, épinglé, ouvert sur `"subagent"` ; pendant une autorisation, `State.defaultView()` comme aujourd'hui. Un sous-agent parti pendant que sa fiche est ouverte : la fiche garde ses dernières données (copie au moment du départ) jusqu'à la fermeture.
+
+- [ ] **Step 1: Tests** : `the card shows the last six steps and the answer` ; `clicking a subagent opens its card` ; `a waiting approval wins` ; `clicking a session opens its tab`.
+- [ ] **Step 2:** Lancer : échec. **Step 3:** Implémenter, clés i18n (« Session », libellés d'état si nouveaux). **Step 4:** Tests, `tsc`, `vite build` verts ; CI verte (`i18n.test.mjs`).
+
+### Task 7: Réglages
+
+**Files:** Modify `src/settings/mascot.ts`, `src/i18n/extra.json`, `tests/mascot-settings.test.mjs`.
+
+- Curseur « Size of the small mascots » (60 à 120, pas de 10), choix « Small mascots » (`all` / `sessions` / `none`), liste « Subagent colors » (une ligne par `knownSubagentTypes` : sélecteur de couleur, et pour un export blob : accessoire, yeux, joues, avec les valeurs acceptées par Blob Atelier lues dans `engines/agent-mascot.js` ; grisés pour un export non blob), champ « Add a type », bouton « Put the mascots back in line » (vide `miniPositions`).
+- [ ] **Step 1: Test** : `the settings offer size, display and subagent colors`. **Step 2:** Implémenter, 13 langues. **Step 3:** CI verte.
+
+### Task 8: Vérification dans l'app
+
+- [ ] Installeur, installation silencieuse.
+- [ ] Une session `claude -p` qui lance 2 sous-agents Explore et 1 general-purpose : deux couleurs, captures. Capturer aussi le `SubagentStop` de Claude Code (fichier de réglages temporaire `--settings`, comme le 2026-11-14) pour vérifier `last_assistant_message`.
+- [ ] Changer la couleur d'Explore dans les Réglages : la petite mascotte change de couleur sans casser le personnage 3D.
+- [ ] Glisser une petite mascotte à l'opposé de l'écran ; un nouveau sous-agent Explore y revient ; double-clic : retour en file. Captures.
+- [ ] Clic sur un sous-agent : sa fiche, ses étapes, le lien « Session ». Capture.
+- [ ] Mesure processeur et GPU, mascotte posée loin (fenêtre presque plein écran) contre toutes en file. Si la hausse est nette, s'arrêter et en parler à Darius (repli : une fenêtre par mascotte posée).
+
+### Task 9: Taille de la grande mascotte (ajout du 2026-11-15)
+
+**Files:** Modify `src-tauri/src/settings.rs`, `src-tauri/src/island.rs` (`corner_layout`, `apply_corner`, `corner_tests`), `src/core/state.ts`, `src/island/corner.ts` (`MASCOT_SIZE`), `src/island/island.ts`, `src/settings/mascot.ts`, `src/i18n/extra.json`.
+
+**Interfaces:**
+- Réglage `mascot_size: f64` (JSON `mascotSize`), 240.0 par défaut, borné à 120..240 à la lecture. Appartient à la page.
+- `corner_layout(work, scale, mascot_at, panel, minis, dragging, mascot_size: f64)` ; la constante `MASCOT_SIZE` (Rust et TS) devient la valeur par défaut. `apply_corner` lit le réglage.
+- L'île utilise `State.settings.mascotSize` partout où elle utilisait `MASCOT_SIZE` (taille repliée, zone cliquable).
+- Réglages : curseur « Size of the big mascot » (120 à 240, pas de 20), 13 langues.
+
+- [ ] **Step 1: Tests Rust** : `a smaller big mascot keeps its top left` (taille 160, `mascot_at = Some((1000.0, 500.0))` : la mascotte écran vaut `rect(1000, 500, 160, 160)`) ; `a smaller big mascot at home sits in the corner` (taille 160, pas de position : `rect(1744, 864, 160, 160)` sur 1920 x 1040) ; `mascot_size_is_clamped` (300 lu comme 240, 50 comme 120) ; anciens appels adaptés avec `240.0`. Pousser seuls : CI rouge.
+- [ ] **Step 2:** Implémenter Rust et page ; test TS de la section Réglages (`mascot-settings.test.mjs` : le curseur existe) ; CI verte.
+
+### Task 10: Le panneau de la fiche s'ouvre à côté de la petite mascotte (ajout du 2026-11-15)
+
+> Remplacée par la tâche 12 : la fiche utilise maintenant un petit panneau dédié.
+
+**Files:** Modify `src-tauri/src/island.rs` (`corner_layout`, `apply_corner`, `corner_tests`), `src-tauri/src/lib.rs` (commande), `src/core/bridge.ts`, `src/island/island.ts` (`openSubagent`, `closeSubagent`).
+
+**Interfaces:**
+- `corner_layout(work, scale, mascot_at, panel, minis, dragging, mascot_size, panel_anchor: Option<IslandRect>)` : `panel_anchor` est le rectangle écran, en pixels physiques, de la petite mascotte dont la fiche est ouverte ; `None` : placement actuel.
+- Règle : si l'ancre est dans le bloc grande mascotte + file, le panneau garde son placement vertical actuel (au-dessus ou en dessous du bloc) mais son `x` est centré sur l'ancre puis ramené dans la zone de travail. Sinon (mascotte posée), le panneau est au-dessus de l'ancre (`y = ancre.y - 8 - h`) si l'ancre est dans la moitié basse de la zone de travail, en dessous sinon (`y = ancre.y + ancre.h + 8`), `x` centré sur l'ancre, puis ramené dans la zone de travail.
+- `static CORNER_PANEL_ANCHOR: Mutex<Option<IslandRect>>` lu par `apply_corner` ; commande `corner_panel_anchor(app, shared, anchor: Option<IslandRect>)` qui le range puis refait la géométrie ; `Bridge.cornerPanelAnchor(anchor: Rect | null)`.
+- Page : `openSubagent(key)` envoie le rectangle écran de la case (`layout.window.x + mini.x * layout.scale`, idem pour `y`, `w`, `h`) avant d'ouvrir ; `closeSubagent()` envoie `null`. Si le sous-agent part, l'ancre n'est pas effacée tant que la fiche est ouverte.
+
+- [ ] **Step 1: Tests Rust** (valeurs pour `WORK` 1920 x 1040, grande mascotte de 240 à la maison, 3 cases de 120 en file, panneau 720 x 320) : `a subagent card opens above the line, centred on its mascot` (ancre = troisième case, écran `(1280, 904, 120, 120)` : panneau écran `(980, 456, 720, 320)`) ; `a subagent card opens below a placed mascot near the top` (ancre posée `(100, 100, 120, 120)` : panneau écran `(0, 228, 720, 320)`) ; `no anchor keeps the old placement` (les tests existants passent `None`). Pousser seuls : CI rouge.
+- [ ] **Step 2:** Implémenter Rust et page ; CI verte ; vérification dans l'app (capture d'une fiche ouverte à côté d'une petite mascotte en file et d'une posée).
+
+### Task 11: Galerie des mascottes (ajout du 2026-11-15)
+
+**Files:** Modify `src-tauri/src/mascot.rs` (bibliothèque, dossier de mascottes, routage, commandes, tests), `src-tauri/src/lib.rs` (protocole, commandes), `src-tauri/src/settings.rs` (`mascot_folder: Option<String>`), `src/core/bridge.ts`, `src/core/state.ts`, `src/mascot/host.ts` (option `thumb`), `src/settings/mascot.ts`, nouveau `src/settings/mascot-gallery.ts`, `src/i18n/extra.json`, tests.
+
+**Interfaces:**
+- Rust : `install` garde aussi une copie dans `mascots/library/<id>` (`id` = nom du dossier d'export, nettoyé) ; `pub fn gallery(folder: Option<&Path>) -> Vec<GalleryItem>` avec `GalleryItem { id: String, source: "library" | "folder", info: MascotInfo }` (bibliothèque d'abord, puis dossier ; exports invalides ignorés) ; `fn valid_id(&str) -> bool` (lettres, chiffres, `-`, `_`, `.`, pas `..`) ; `route` reconnaît `/lib/<id>/…` et `/dir/<id>/…` (`base_url` de chaque `info` en conséquence).
+- Commandes : `mascot_gallery() -> Vec<GalleryItem>` (lit `mascot_folder` des réglages) ; `mascot_apply(app, source, id, slot) -> Result<MascotInfo, String>` (même chemin que `mascot_import`, mêmes codes d'erreur, plus `"bad_id"`) ; `mascot_forget(id)` (retire de la bibliothèque) ; `mascot_pick_folder` n'est pas nécessaire : la page utilise le sélecteur existant puis enregistre `mascotFolder` dans les réglages.
+- Page : `mascotGallery(settings, save): HTMLElement` dans `mascot-gallery.ts` ; vignettes `MascotHost` en mode `thumb` (rendu 96 px, pause après 1,5 s en `idle`, reprise au survol), chargées par `IntersectionObserver`, 12 au plus en même temps ; boutons « Claude Code » et « Codex » (désactivés pendant l'application, erreur visible sous la vignette, active marquée) ; « Choose the mascot folder » ; « Remove from gallery » pour la bibliothèque.
+
+- [ ] **Step 1: Tests Rust** : `an import is kept in the library` ; `the gallery lists the library then the folder` ; `an invalid export in the folder is skipped` ; `a gallery id cannot climb out` (`..`, `a/b`, `a\b` refusés) ; `the protocol serves a library export` (`/lib/<id>/manifest.json`) ; `applying from the gallery installs into the slot`. Pousser seuls : CI rouge.
+- [ ] **Step 2: Tests TS** : `at most twelve thumbnails load at once` (fonction pure de sélection des vignettes à charger) ; `the active export is marked per role`. Rouge puis vert en local.
+- [ ] **Step 3:** Implémenter ; i18n 13 langues ; CI verte.
+- [ ] **Step 4: Vérification dans l'app** : choisir `text-to-mascot\exports` comme dossier ; capture de la galerie ; appliquer un export à Codex en un clic ; mesure processeur avec la galerie ouverte.
+
+### Task 12: Petit panneau propre à chaque sous-agent (ajout du 2026-11-15)
+
+> Généralisée par la tâche 13 : la même carte sert maintenant chaque mini.
+
+**Files:** Modify `src-tauri/src/island.rs` (`corner_layout`, `apply_corner`, `corner_tests`), `src/island/corner.ts`, `src/island/island.ts`, `src/views/subagent.ts`, `src/views/subagent-card.ts`, `src/views/views.ts`, `src/style.css`, `tests/corner.test.mjs`, `tests/subagent-card.test.mjs`, cette spec et ce plan.
+
+**Interfaces:**
+- Rust : `SUBAGENT_PANEL_W = 320.0`, `SUBAGENT_PANEL_MAX_H = 300.0`. `apply_corner` passe cette taille à `corner_layout` quand `CORNER_PANEL_ANCHOR` contient une ancre, et garde `(PANEL_W, PANEL_H)` sans ancre. Le panneau ancré est centré sur l'ancre, borné à la zone de travail, placé à `MINI_GAP` au-dessus dans la moitié basse et en dessous dans la moitié haute ou faute de place au-dessus.
+- Page : `subagentPanelPlacement(layout, anchor, height)` place la carte de hauteur réelle dans la zone maximale donnée par Rust et renvoie le côté et l'abscisse de la pointe. `subagentClickAction(openKey, clickedKey, smallPanel)` ferme la carte lors d'un second clic sur la même mini en mode coin.
+- `Island` garde l'ancre physique de la mini, mesure la hauteur du contenu sans polling, envoie le rectangle réel à `cornerRects`, masque l'en-tête et les onglets seulement pour cette carte, et efface l'ancre quand la grande mascotte ou une autre vue reprend le grand panneau.
+- `buildSubagent` affiche toutes les étapes dans une liste défilante, limite la réponse finale à quatre lignes, et fournit un bouton de fermeture avec `aria-label`, état pressé et `:focus-visible`. Hors mode coin, les six dernières étapes restent affichées dans le grand panneau.
+
+- [ ] **Step 1: Tests Rust** dans `corner_tests` : `an_anchored_subagent_panel_is_small` ; `a_queued_subagent_panel_sits_above_its_mini` ; `a_placed_subagent_panel_sits_above_its_mini` ; `a_subagent_panel_opens_below_a_mini_near_the_top` ; `a_subagent_panel_stays_on_screen_at_an_edge` ; `no_anchor_keeps_the_large_panel_size_and_place`. Adapter les deux tests de la tâche 10 qui attendaient un panneau de 720 x 320 avec ancre. Pousser seuls : CI rouge.
+- [ ] **Step 2: Tests TS** : `the small subagent card points at its mini from above` ; `the small subagent card points at its mini from below` ; `clicking the open subagent mini closes its small card` ; `the big mascot replaces a small subagent card with the big panel` ; `the card keeps every step for its scrolling list and the answer`. Lancer : échec.
+- [ ] **Step 3:** Implémenter Rust et page, sans changer le grand panneau ni le mode haut.
+- [ ] **Step 4:** Tests TS, `npx tsc --noEmit`, `npx vite build` verts ; CI Rust verte.
+
+### Task 13: Petit panneau pour chaque mini (ajout du 2026-11-15)
+
+**Files:** Modify `src/mascot/agents.ts`, `src/island/corner.ts`, `src/island/minis-view.ts`, `src/island/island.ts`, `src/core/state.ts`, `src/views/subagent.ts`, `src/views/subagent-card.ts`, `tests/agent-mascots.test.mjs`, `tests/subagent-card.test.mjs`, cette spec et ce plan.
+
+**Interfaces:**
+- `AgentMascots` garde les étapes et `last_assistant_message` pour les sessions comme pour les sous-agents. Le plafond reste de 50 étapes par mascotte.
+- `miniClickTarget(mascot, approvalWaits, openKey, smallPanel): "approval" | "card" | "close" | "more"` accepte une `AgentMascot` ou `"more"`. Une attente ouvre le grand panneau ; une mini ordinaire ouvre sa carte ; la mini déjà ouverte ferme sa carte ; `"more"` conserve son action. Cette décision remplace `subagentClickAction`.
+- `MiniHandlers.open` accepte une mascotte ou `"more"`, afin que toutes les cases passent par une seule décision de clic.
+- La vue `"subagent"` reste l'unique vue de carte. Pour une session, son titre est `"Claude Code"` ou `"Codex"`, sa couleur vient de son onglet, et le projet, les étapes et la réponse finale viennent de sa propre `AgentMascot`.
+- `Island.openMiniCard(key)` utilise l'ancre et la carte de 320 px existantes pour les sessions et les sous-agents. Le bouton « Ouvrir la session » appelle `openPill(pillId)`. Rust et `corner_layout` ne changent pas.
+
+- [ ] **Step 1: Tests TS** : `a session keeps its own steps` ; `a Claude Code session keeps its final answer` ; `a Codex session keeps its final answer` ; `clicking a subagent opens its card` ; `clicking a session opens its card` ; `a waiting approval wins` ; `the grouped mini keeps its current action` ; `a session card shows its agent, project, steps and final answer` ; `clicking the open session mini closes its small card`.
+- [ ] **Step 2:** Lancer `tests/agent-mascots.test.mjs` et `tests/subagent-card.test.mjs` : échec.
+- [ ] **Step 3:** Implémenter le modèle et le chemin unique de carte, sans modifier Rust ni la logique de surveillance.
+- [ ] **Step 4:** Tests TS ciblés, `npx tsc --noEmit` et `npx vite build` verts.
+
+### Task 14: Mascotte de galerie propre à chaque mini (ajout du 2026-11-16)
+
+**Files:** Modify `src-tauri/src/settings.rs`, `src-tauri/src/mascot.rs`, `src/core/state.ts`, `src/main.ts`, `src/island/island.ts`, `src/island/minis-view.ts`, `src/settings/mascot.ts`, `src/settings/mascot-gallery.ts`, `src/i18n/extra.json`, cette spec et ce plan. Create `src/mascot/mini-exports.ts`, `tests/mini-mascot-selection.test.mjs`. Modify `tests/mascot-settings.test.mjs`.
+
+**Interfaces:**
+- Réglages Rust et TS : `mini_mascot_mode: String` / `miniMascotMode: "role" | "gallery"` avec `"role"` par défaut ; `mini_mascot_pins: BTreeMap<String, String>` / `miniMascotPins: Record<string, string>` ; `known_mini_projects: Vec<String>` / `knownMiniProjects: string[]`.
+- `export function miniMascotSettingKey(m: AgentMascot): string` renvoie `project:<projet>` pour une session et `type:<type>` pour un sous-agent. La famille ne fait pas partie de la clé.
+- `export function galleryItemKey(item: MascotGalleryItem): string` renvoie `<source>:<id>`.
+- `export function miniExportsFor(list, gallery, choices, roles): readonly (MascotInfo | null)[]` dans `src/mascot/mini-exports.ts` : le mode `role` renvoie l'export Claude Code ou Codex ; le mode `gallery` ne garde que les moteurs `3d` et `blob`, déduplique un même `id`, trie les choix, applique une épingle valide, puis choisit avec FNV-1a et avance pour éviter les doublons visibles quand c'est possible. Une épingle absente ou une galerie sans export admissible retombe sur l'export du rôle.
+- `MinisView.setGallery(items)` conserve le dernier instantané de la galerie. Son rendu appelle `miniExportsFor` une seule fois pour la liste affichée et charge chaque case avec le résultat correspondant. Le look du sous-agent reste envoyé par `setLook`.
+- `Island.syncAgentMascots` ajoute chaque projet de session inconnu à `knownMiniProjects` et sauvegarde au plus une fois par synchronisation, comme pour `knownSubagentTypes`.
+- La galerie est rechargée au démarrage, après `mascot-changed`, après `mascot-gallery-changed` et après un changement de `mascotFolder`. `mascot_forget` émet `mascot-gallery-changed`.
+- Les Réglages montrent le mode puis, en mode galerie, un sélecteur par projet et par type connu. Les options sont « Au hasard » puis les exports 3D et blob sous la forme nom et moteur. Une valeur disparue est affichée comme « Au hasard ».
+
+- [ ] **Step 1: Tests Rust** dans `settings.rs` : `random_mini_mascots_use_role_defaults` ; `a_file_from_before_random_mini_mascots_uses_role_defaults` ; ajouter les trois clés au JSON complet qui vérifie la liste des réglages. Pousser seuls : CI rouge.
+- [ ] **Step 2: Tests TS** dans `mini-mascot-selection.test.mjs` : `the same project gets the same stable gallery mascot` ; `visible minis avoid duplicate gallery mascots when possible` ; `video mascots are excluded from minis` ; `a pin wins over the random gallery choice` ; `a missing pin falls back to the stable gallery choice` ; `an empty eligible gallery falls back to the role mascot` ; `role mode keeps the role mascot` ; `selection keys follow project or subagent type`. Ajouter `the settings offer random gallery mascots and pins` dans `mascot-settings.test.mjs`. Lancer : échec.
+- [ ] **Step 3:** Implémenter les réglages, le sélecteur pur, le chargement de galerie, les épingles et les chaînes dans les 13 langues.
+- [ ] **Step 4:** Tests TS ciblés, `npx tsc --noEmit` et `npx vite build` verts ; CI Rust verte.

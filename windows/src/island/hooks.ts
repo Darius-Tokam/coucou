@@ -16,6 +16,7 @@ import { parseClaudePlan, restorePlanUsage } from "../core/plan";
 import { setClaudePlanUsage, storedClaudePlanUsage } from "../views/usage";
 import { N_, t } from "../i18n/i18n";
 import { Launch } from "../core/launch";
+import { agentEventFrom, agentMascots } from "../mascot/agents";
 
 const CLAUDE_ID = "integration_claude";
 const CURSOR_ID = "agent_cursor";
@@ -159,6 +160,7 @@ interface HookPayload {
   hook_event_name?: string;
   request_id?: string;
   session_id?: string;
+  agent_id?: string;
   cwd?: string;
   message?: string;
   /** UserPromptSubmit carries `prompt`; `message` belongs to Notification/Stop. */
@@ -390,6 +392,9 @@ function handleHook(island: Island, payload: HookPayload) {
   const validAgent = validateAgent(payload.coucou_agent);
   const workspaceId = payload.term_editor === "cursor" ? CURSOR_ID : CLAUDE_ID;
   const agentId = validAgent ? `agent_${validAgent}` : workspaceId;
+  const step = name === "PreToolUse" ? stepLabel(payload.tool_name ?? "Tool", payload.tool_input ?? {}) : null;
+  const agentEvent = agentEventFrom(payload, agentId, projectName, step);
+  if (agentEvent && agentMascots.apply(agentEvent, performance.now())) State.notify();
   const isExternalAgent = validAgent !== null;
   const sessionId = payload.session_id ?? "";
 

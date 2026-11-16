@@ -8,6 +8,7 @@ import type { BotEmoteName } from "../core/layout";
 import { Sound } from "../core/sound";
 import { State } from "../core/state";
 import { desktopDances } from "../core/spotify";
+import { CORNER_SUPPORTED } from "./corner";
 import {
   DESKTOP_EVENTS, DesktopMochiController, alertActive, type DesktopSnapshot,
 } from "../mochi/desktop-logic";
@@ -65,6 +66,8 @@ export class DesktopLink {
   }
 
   async init() {
+    // In corner mode the mascot already lives on the screen: no second Mochi.
+    if (CORNER_SUPPORTED && State.settings.islandAnchor === "corner") return;
     const info = await Bridge.desktopInfo();
     if (!info || info.mode === "off") return;
     this.mode = info.mode;

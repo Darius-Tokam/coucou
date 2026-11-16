@@ -9,6 +9,7 @@ import { registerHookHandlers, restoreAlertFocus } from "../src/island/hooks.ts"
 import { DEFAULT_SETTINGS, State } from "../src/core/state.ts";
 import { Sound } from "../src/core/sound.ts";
 import { setLanguage } from "../src/i18n/i18n.ts";
+import { agentMascots } from "../src/mascot/agents.ts";
 
 const CLAUDE = "integration_claude";
 
@@ -27,6 +28,7 @@ const task = (id = CLAUDE) => State.tasks.find((t) => t.id === id);
 const seconds = (n) => mock.timers.tick(n * 1000);
 
 beforeEach(() => {
+  agentMascots.clear();
   setLanguage("en");
   mock.timers.enable({ apis: ["setTimeout"] });
   asked = [];
@@ -70,6 +72,18 @@ test("a paused island ignores every other event", () => {
   assert.equal(task().name, "Claude Code");
   assert.deepEqual(asked, []);
   assert.deepEqual(calls, []);
+});
+
+test("hook events feed the agent mascots", () => {
+  hook({ hook_event_name: "SubagentStart", session_id: "s1", agent_id: "a1", agent_type: "Explore", cwd: "C:/p/demo" });
+  assert.equal(agentMascots.list.length, 1);
+  assert.equal(agentMascots.list[0].key, "claude:s1:a1");
+});
+
+test("paused islands make no mascots", () => {
+  State.paused = true;
+  hook({ hook_event_name: "SubagentStart", session_id: "s1", agent_id: "a1", agent_type: "Explore", cwd: "C:/p/demo" });
+  assert.equal(agentMascots.list.length, 0);
 });
 
 // ── Session and work events ───────────────────────────────────────────────────

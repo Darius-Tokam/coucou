@@ -24,6 +24,100 @@ async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T |
   }
 }
 
+/** A rectangle; window-logical px unless said otherwise. */
+export interface Rect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/**
+ * Corner mode (island.rs `corner-layout` event): the window in physical screen
+ * px, the mascot and the open panel in window-logical px.
+ */
+export interface CornerLayout {
+  window: Rect;
+  mascot: Rect;
+  panel: Rect | null;
+  minis: Rect[];
+  scale: number;
+}
+
+export interface MiniSlot {
+  size: number;
+  at: [number, number] | null;
+}
+
+export type MascotSlot = "claude" | "codex";
+
+/** One MascotForge export Coucou can show (src-tauri/src/mascot.rs). */
+export interface MascotInfo {
+  name: string;
+  engine: "blob" | "3d" | "video";
+  credit: string | null;
+  alpha: "stacked" | "none";
+  states: string[];
+  defaultState: string;
+  tintMaterial: string | null;
+  manifestPath: string;
+  scriptPath: string;
+  /** Root of the `mascot` protocol: manifest.json and mascot.js live under it. */
+  baseUrl: string;
+  /** Export folder name retained when this copy was installed. */
+  sourceId: string | null;
+}
+
+export type MascotGallerySource = "library" | "folder";
+
+export interface MascotGalleryItem {
+  id: string;
+  source: MascotGallerySource;
+  info: MascotInfo;
+}
+
+export interface MascotChanged {
+  slot: MascotSlot;
+  info: MascotInfo | null;
+}
+
+/**
+ * Imports a MascotForge export. The info on success; on failure the error
+ * code ("not_an_export", "bad_manifest", "wrong_version", "missing_file:<file>",
+ * "io"), or "io" outside Tauri.
+ */
+async function mascotImport(folder: string, slot: MascotSlot): Promise<MascotInfo | string> {
+  if (!IS_TAURI) return "io";
+  try {
+    return await invoke<MascotInfo>("mascot_import", { folder, slot });
+  } catch (err) {
+    return typeof err === "string" ? err : "io";
+  }
+}
+
+async function mascotApply(
+  source: MascotGallerySource,
+  id: string,
+  slot: MascotSlot,
+): Promise<MascotInfo | string> {
+  if (!IS_TAURI) return "io";
+  try {
+    return await invoke<MascotInfo>("mascot_apply", { source, id, slot });
+  } catch (err) {
+    return typeof err === "string" ? err : "io";
+  }
+}
+
+async function mascotForget(id: string): Promise<string | null> {
+  if (!IS_TAURI) return "io";
+  try {
+    await invoke<void>("mascot_forget", { id });
+    return null;
+  } catch (err) {
+    return typeof err === "string" ? err : "io";
+  }
+}
+
 export interface BootInfo {
   settings: Settings;
   /** Logical screen rect of the monitor the island lives on. */
@@ -224,9 +318,19 @@ export const Bridge = {
   setIslandRect: (x: number, y: number, width: number, height: number) =>
     call<void>("set_island_rect", { x, y, width, height }),
 
+  /** Corner mode: the page starts dragging the mascot; Rust keeps where it lands. */
+  cornerDragStarted: () => call<void>("corner_drag_started"),
+
+  /** Corner mode: every rect that takes the mouse (the mascot, the open panel). */
+  setIslandRects: (rects: Rect[]) => call<void>("set_island_rects", { rects }),
+
   /** Give the window keyboard focus (chat field) and take it away again. */
   focusWindow: (focused: boolean) => call<void>("focus_window", { focused }),
 
+  setCornerMinis: (slots: MiniSlot[], dragging: boolean) =>
+    call<void>("set_corner_minis", { slots, dragging }),
+  cornerMiniDrag: (on: boolean) => call<void>("corner_mini_drag", { on }),
+  cornerPanelAnchor: (anchor: Rect | null) => call<void>("corner_panel_anchor", { anchor }),
   reposition: () => call<void>("reposition"),
   fitZoom: (dpr: number) => call<boolean>("fit_zoom", { dpr }),
 
@@ -270,6 +374,15 @@ export const Bridge = {
 
   /** The system's folder picker, `start` open in it; null when cancelled. */
   pickFolder: (start: string | null) => call<string | null>("pick_folder", { start }),
+
+  mascotImport,
+  mascotGallery: () => call<MascotGalleryItem[]>("mascot_gallery"),
+  mascotApply,
+  mascotForget,
+  /** The active MascotForge mascot in one slot, null for Mochi. */
+  mascotCurrent: (slot: MascotSlot) => call<MascotInfo | null>("mascot_current", { slot }),
+  /** Back to Mochi in one slot. */
+  mascotClear: (slot: MascotSlot) => call<void>("mascot_clear", { slot }),
 
   /**
    * A file dropped on a session: its window comes forward and the paths are

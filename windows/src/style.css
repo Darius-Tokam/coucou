@@ -57,6 +57,129 @@ body {
   inset: 0;
 }
 
+/* Corner mode (island/corner-view.ts): the mascot, no background. */
+.mascot-box {
+  position: absolute;
+  display: none;
+  transition: transform 120ms ease-out;
+}
+.mascot-box:has(.mascot-layer:active) {
+  transform: scale(0.97);
+}
+.mascot-mochi {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.mascot-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  cursor: grab;
+}
+
+.mini-box {
+  position: absolute;
+  display: none;
+  background: transparent;
+  transition: transform 120ms ease-out;
+}
+
+.mini-box:has(.mini-layer:active) {
+  transform: scale(0.97);
+}
+
+.mini-box.dragging {
+  z-index: 8;
+  transform: scale(0.97);
+}
+
+.mini-box.dragging .mini-layer {
+  cursor: grabbing;
+}
+
+.mini-visual {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: calc(100% - 20px);
+  aspect-ratio: 1;
+  transform: translateX(-50%);
+}
+
+.mini-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.mini-layer:focus-visible,
+.mini-more:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.9);
+  outline-offset: -2px;
+}
+
+.mini-label {
+  position: absolute;
+  right: 4px;
+  bottom: 2px;
+  left: 4px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 0;
+  height: 20px;
+  padding: 0 7px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  background: rgba(14, 15, 17, 0.82);
+  color: var(--ink-2);
+  font: 500 10px var(--font);
+  backdrop-filter: blur(8px);
+}
+
+.mini-dot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.mini-label-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mini-more {
+  position: absolute;
+  display: none;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 18px;
+  background: rgba(20, 21, 24, 0.88);
+  color: var(--ink);
+  font: 700 18px var(--font);
+  cursor: pointer;
+  transition: transform 120ms ease-out, background 120ms ease-out;
+  backdrop-filter: blur(10px);
+}
+
+.mini-more:hover {
+  background: rgba(29, 31, 35, 0.94);
+}
+
+.mini-more:active {
+  transform: scale(0.97);
+}
+
 /* Invisible strip that wakes the island when it is hidden. */
 #wake-strip {
   position: fixed;
@@ -72,6 +195,7 @@ body {
 
 #island {
   position: absolute;
+  z-index: 9;
   top: 0;
   left: 50%;
   background: #000;
@@ -456,6 +580,11 @@ body {
 
 .btn.secondary:hover {
   background: rgba(255, 255, 255, 0.15);
+}
+
+.btn:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.9);
+  outline-offset: 2px;
 }
 
 .btn .kbd {
@@ -898,6 +1027,188 @@ body {
 .actions {
   display: flex;
   gap: 8px;
+}
+
+.subagent-card {
+  padding: 12px 18px;
+  align-items: stretch;
+  gap: 7px;
+}
+
+.subagent-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.subagent-title .sub {
+  min-width: 0;
+  margin-left: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.subagent-steps {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 2px 12px;
+}
+
+.subagent-steps .sub,
+.subagent-answer {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.subagent-answer {
+  min-height: 16px;
+  color: var(--ink-2);
+  font: 400 12px var(--font);
+}
+
+.subagent-close {
+  position: absolute;
+  top: 9px;
+  right: 9px;
+  display: none;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--ink-2);
+  cursor: pointer;
+  transition: transform 80ms ease-out, background 120ms ease-out;
+}
+
+.subagent-close:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.subagent-close:active {
+  transform: scale(0.94);
+}
+
+.subagent-close:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.9);
+  outline-offset: 2px;
+}
+
+#island:not(.subagent-popover) .subagent-steps .sub {
+  display: none;
+}
+
+#island:not(.subagent-popover) .subagent-steps .sub:nth-last-child(-n + 6) {
+  display: block;
+}
+
+#island.subagent-popover {
+  --subagent-pointer-x: 50%;
+  border: 1px solid var(--hairline);
+  background: var(--card);
+  overflow: visible;
+}
+
+#island.subagent-popover::before {
+  content: "";
+  position: absolute;
+  left: var(--subagent-pointer-x);
+  z-index: 0;
+  width: 12px;
+  height: 12px;
+  background: var(--card);
+  transform: translateX(-50%) rotate(45deg);
+}
+
+#island.subagent-popover.pointer-top::before {
+  top: -7px;
+  border-top: 1px solid var(--hairline);
+  border-left: 1px solid var(--hairline);
+}
+
+#island.subagent-popover.pointer-bottom::before {
+  bottom: -7px;
+  border-right: 1px solid var(--hairline);
+  border-bottom: 1px solid var(--hairline);
+}
+
+#island.subagent-popover #island-clip {
+  z-index: 1;
+}
+
+/* The popover only uses the clipped card. Hide the island chrome that normally
+   sits outside it while leaving the parent's pointer visible. */
+#island.subagent-popover > :not(#island-clip) {
+  visibility: hidden;
+}
+
+#island.subagent-popover #content {
+  padding: 0;
+}
+
+#island.subagent-popover #header {
+  display: none;
+}
+
+#island.subagent-popover .subagent-panel-card {
+  height: auto;
+  max-height: 300px;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+}
+
+#island.subagent-popover .subagent-card {
+  height: auto;
+  max-height: 298px;
+  padding: 14px;
+  justify-content: flex-start;
+  gap: 8px;
+}
+
+#island.subagent-popover .subagent-title {
+  flex-wrap: wrap;
+  padding-right: 28px;
+}
+
+#island.subagent-popover .subagent-title .sub {
+  flex: 0 0 calc(100% - 13px);
+  margin-left: 13px;
+}
+
+#island.subagent-popover .subagent-close {
+  display: grid;
+}
+
+#island.subagent-popover .subagent-steps {
+  display: flex;
+  flex: 0 1 auto;
+  flex-direction: column;
+  gap: 3px;
+  max-height: 92px;
+  padding-right: 4px;
+  overflow-y: auto;
+}
+
+#island.subagent-popover .subagent-steps .sub {
+  flex: 0 0 auto;
+  text-overflow: ellipsis;
+}
+
+#island.subagent-popover .subagent-answer {
+  display: -webkit-box;
+  min-height: 0;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+}
+
+#island.subagent-popover .actions {
+  flex: 0 0 auto;
 }
 
 /* Options to pick from when Claude Code asks a question. */

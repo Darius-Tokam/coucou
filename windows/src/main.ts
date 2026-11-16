@@ -1,7 +1,7 @@
 // Entry point: boot the bridge, wire the island, start the greeting.
 
 import "./style.css";
-import { Bridge, IS_TAURI, onEvent } from "./core/bridge";
+import { Bridge, IS_TAURI, onEvent, type CornerLayout, type MascotChanged } from "./core/bridge";
 import { Sound } from "./core/sound";
 import { State, type Settings } from "./core/state";
 import { Island } from "./island/island";
@@ -64,6 +64,30 @@ async function main() {
   await onEvent<{ x: number; y: number }>("cursor", ({ x, y }) => island.onCursor(x, y));
   await onEvent<boolean>("pointer-inside", (inside) => island.setPointerInside(inside));
   await onEvent<null>("closed-hover", () => island.wakeFromClosed());
+
+  // Corner mode: where Rust put the mascot, and which MascotForge mascot it is.
+  await onEvent<CornerLayout>("corner-layout", (layout) => island.setCornerLayout(layout));
+  const loadMascots = async (reloadCorner: boolean) => {
+    const [claude, codex, gallery] = await Promise.all([
+      Bridge.mascotCurrent("claude"),
+      Bridge.mascotCurrent("codex"),
+      Bridge.mascotGallery(),
+    ]);
+    if (reloadCorner) island.corner.load(claude);
+    island.minis.setExports(claude, codex);
+    island.minis.setGallery(gallery ?? []);
+  };
+  await onEvent<MascotChanged>("mascot-changed", ({ slot }) => {
+    void loadMascots(slot === "claude");
+  });
+  await onEvent<null>("mascot-gallery-changed", () => {
+    void Bridge.mascotGallery().then((gallery) => island.minis.setGallery(gallery ?? []));
+  });
+  // Folded in a corner, Rust still reports a cursor near the mascot: he follows it.
+  await onEvent<{ x: number; y: number }>("mascot-cursor", (p) => island.onMascotCursor(p.x, p.y));
+  await loadMascots(true);
+  // Rust placed the window before this page listened: ask again to hear where.
+  void Bridge.reposition();
 
   /** Pause has to reach Rust too, or the pollers keep calling out. */
   const setPaused = (on: boolean) => {
@@ -149,12 +173,16 @@ async function main() {
   // The settings window writes preferences; apply them here without a restart.
   await onEvent<Settings>("settings-changed", (s) => {
     const previousMain = State.mainPillId;
+    const previousMascotFolder = State.settings.mascotFolder;
     State.settings = { ...State.settings, ...s };
     applyLanguage();
     island.applySettings();
     State.loadIntegrationTasks();
     // A new main tool comes to the front, as on macOS.
     if (State.mainPillId !== previousMain) State.setFocus(State.mainPillId);
+    if (State.settings.mascotFolder !== previousMascotFolder) {
+      void Bridge.mascotGallery().then((gallery) => island.minis.setGallery(gallery ?? []));
+    }
     void refreshConfigured();
   });
 

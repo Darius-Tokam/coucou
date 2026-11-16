@@ -25,6 +25,7 @@ mod launch;
 mod local_chat;
 mod log;
 mod mail;
+mod mascot;
 mod net;
 mod notes;
 mod openai_compat;
@@ -102,12 +103,14 @@ fn boot(app: AppHandle, shared: State<Shared>) -> BootInfo {
 fn save_settings(app: AppHandle, shared: State<Shared>, settings: Settings) {
     let (settings, screen_changed, autostart_changed, shortcuts_changed) = {
         let mut current = shared.settings.lock().unwrap();
-        let screen_changed = current.screen != settings.screen;
+        let screen_changed = current.screen != settings.screen || current.island_anchor != settings.island_anchor;
         let autostart_changed = current.autostart != settings.autostart;
         let shortcuts_changed = current.shortcuts != settings.shortcuts;
         // Where Mochi sits on the desktop is desktop.rs's to say, not a webview's.
         let mut settings = settings.clone();
         settings.desktop_mochi = current.desktop_mochi.clone();
+        // Where the corner mascot sits is the window's to say (saved when it is dragged).
+        settings.corner_pos = current.corner_pos;
         // Same for the phone link: only its own commands turn it on or off.
         settings.phone_link = current.phone_link;
         settings.phone_chat = current.phone_chat;
@@ -186,10 +189,79 @@ fn set_collapsed(app: AppHandle, shared: State<Shared>, collapsed: bool, width: 
         shared.gate.set_active(false);
     }
     island::apply_geometry(&app, &pref, collapsed.then_some(size));
-    // The closed island must always take the mouse, and a resize invalidates the flag.
+    // A resize invalidates click-through; in a folded corner only the drawn
+    // rectangles take the mouse.
     island::refresh_click_through(&app, &shared.gate);
     shared.gate.set_active(!collapsed);
     platform::set_pointer_watch(!collapsed);
+}
+
+/// The page is about to drag the corner mascot (corner-view.ts): the moves
+/// that follow are the user's, not the window's own.
+static CORNER_DRAG: AtomicBool = AtomicBool::new(false);
+
+fn finish_corner_drag(reapply: impl FnOnce()) {
+    CORNER_DRAG.store(false, Ordering::Relaxed);
+    reapply();
+}
+
+#[tauri::command]
+fn corner_drag_started() {
+    CORNER_DRAG.store(true, Ordering::Relaxed);
+}
+
+/// Corner mode, closed, during a drag: the mascot keeps its offset inside the
+/// group window. Its screen position is kept at once (opening the card right
+/// after the drop must use it), written to settings.json once it has stayed
+/// put for half a second. Moves the window makes itself (folding, Windows
+/// rehoming it when a display goes) are not the user's: never saved.
+fn corner_moved(app: &AppHandle, x: f64, y: f64) {
+    let shared = app.state::<Shared>();
+    if !CORNER_DRAG.load(Ordering::Relaxed)
+        || !shared.gate.collapsed.load(Ordering::Relaxed)
+        || island::corner_mode(app).is_none()
+    {
+        return;
+    }
+    let (x, y) = island::dragged_mascot_at((x, y));
+    shared.settings.lock().unwrap().corner_pos = Some(settings::CornerPos { x, y });
+    static LATEST: Mutex<Option<(f64, f64)>> = Mutex::new(None);
+    {
+        let mut latest = LATEST.lock().unwrap();
+        let first = latest.is_none();
+        *latest = Some((x, y));
+        if !first {
+            return; // the thread already waiting saves the last spot
+        }
+    }
+    let app = app.clone();
+    std::thread::spawn(move || {
+        // Wait until the drag has stopped moving for half a second.
+        let mut seen = LATEST.lock().unwrap().unwrap_or((x, y));
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            let now = LATEST.lock().unwrap().unwrap_or(seen);
+            if now == seen {
+                break;
+            }
+            seen = now;
+        }
+        *LATEST.lock().unwrap() = None;
+        let shared = app.state::<Shared>();
+        let settings = {
+            let mut current = shared.settings.lock().unwrap();
+            current.corner_pos = Some(settings::CornerPos { x: seen.0, y: seen.1 });
+            current.clone()
+        };
+        if let Err(err) = settings::save(&settings) {
+            log::line(format!("could not save the mascot's place: {err}"));
+        }
+        let _ = app.emit("settings-changed", settings);
+        let pref = shared.settings.lock().unwrap().screen.clone();
+        let collapsed = shared.gate.collapsed.load(Ordering::Relaxed);
+        let size = *shared.gate.collapsed_size.lock().unwrap();
+        finish_corner_drag(|| island::apply_geometry(&app, &pref, collapsed.then_some(size)));
+    });
 }
 
 /// The front end pushes the island shape; Rust decides click-through from it.
@@ -197,6 +269,15 @@ fn set_collapsed(app: AppHandle, shared: State<Shared>, collapsed: bool, width: 
 fn set_island_rect(app: AppHandle, shared: State<Shared>, x: f64, y: f64, width: f64, height: f64) {
     shared.gate.set_rect(island::IslandRect { x, y, w: width, h: height });
     // Without the cursor poll the input region is the click-through: it follows the island.
+    if !platform::CURSOR_POLL {
+        island::refresh_click_through(&app, &shared.gate);
+    }
+}
+
+/// Corner mode: the mascot and the open panel take the mouse, the rest of the window doesn't.
+#[tauri::command]
+fn set_island_rects(app: AppHandle, shared: State<Shared>, rects: Vec<island::IslandRect>) {
+    shared.gate.set_rects(rects);
     if !platform::CURSOR_POLL {
         island::refresh_click_through(&app, &shared.gate);
     }
@@ -213,6 +294,42 @@ fn focus_window(app: AppHandle, focused: bool) {
 
 #[tauri::command]
 fn reposition(app: AppHandle, shared: State<Shared>) {
+    let pref = shared.settings.lock().unwrap().screen.clone();
+    let collapsed = shared.gate.collapsed.load(Ordering::Relaxed);
+    let size = *shared.gate.collapsed_size.lock().unwrap();
+    island::apply_geometry(&app, &pref, collapsed.then_some(size));
+}
+
+#[tauri::command]
+fn set_corner_minis(
+    app: AppHandle,
+    shared: State<Shared>,
+    slots: Vec<island::MiniSlot>,
+    dragging: bool,
+) {
+    island::replace_corner_minis(slots, dragging);
+    let pref = shared.settings.lock().unwrap().screen.clone();
+    let collapsed = shared.gate.collapsed.load(Ordering::Relaxed);
+    let size = *shared.gate.collapsed_size.lock().unwrap();
+    island::apply_geometry(&app, &pref, collapsed.then_some(size));
+}
+
+#[tauri::command]
+fn corner_mini_drag(app: AppHandle, shared: State<Shared>, on: bool) {
+    island::CORNER_MINI_DRAG.store(on, Ordering::Relaxed);
+    let pref = shared.settings.lock().unwrap().screen.clone();
+    let collapsed = shared.gate.collapsed.load(Ordering::Relaxed);
+    let size = *shared.gate.collapsed_size.lock().unwrap();
+    island::apply_geometry(&app, &pref, collapsed.then_some(size));
+}
+
+#[tauri::command]
+fn corner_panel_anchor(
+    app: AppHandle,
+    shared: State<Shared>,
+    anchor: Option<island::IslandRect>,
+) {
+    *island::CORNER_PANEL_ANCHOR.lock().unwrap() = anchor;
     let pref = shared.settings.lock().unwrap().screen.clone();
     let collapsed = shared.gate.collapsed.load(Ordering::Relaxed);
     let size = *shared.gate.collapsed_size.lock().unwrap();
@@ -872,6 +989,26 @@ pub fn run() {
     let gate = Arc::new(PollGate::new());
 
     let mut builder = tauri::Builder::default()
+        // The active MascotForge mascot's files, for the island's iframe (mascot.rs).
+        .register_uri_scheme_protocol("mascot", |_ctx, request| {
+            let range = request.headers().get("range").and_then(|v| v.to_str().ok());
+            let folder = settings::load().mascot_folder.map(std::path::PathBuf::from);
+            let served = match mascot::route(request.uri().path())
+                .and_then(|route| mascot::resolve_route(&mascot::mascots_dir(), folder.as_deref(), route))
+            {
+                Some((root, rest)) => mascot::respond(&root, &rest, range),
+                None => mascot::Served {
+                    status: 404,
+                    headers: vec![("Access-Control-Allow-Origin", "*".into())],
+                    body: Vec::new(),
+                },
+            };
+            let mut response = tauri::http::Response::builder().status(served.status);
+            for (name, value) in served.headers {
+                response = response.header(name, value);
+            }
+            response.body(served.body).unwrap_or_default()
+        })
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
             // `coucou --shortcut <action>`: what a desktop's own keyboard
             // settings run where we can't listen for keys ourselves (Wayland).
@@ -916,8 +1053,13 @@ pub fn run() {
             set_system_languages,
             set_collapsed,
             set_island_rect,
+            set_island_rects,
+            corner_drag_started,
             focus_window,
             reposition,
+            set_corner_minis,
+            corner_mini_drag,
+            corner_panel_anchor,
             fit_zoom,
             hub_shown,
             list_monitors,
@@ -1021,6 +1163,12 @@ pub fn run() {
             sounds::custom_sound,
             sounds::reveal_sounds_folder,
             sounds::reload_sounds,
+            mascot::mascot_import,
+            mascot::mascot_gallery,
+            mascot::mascot_apply,
+            mascot::mascot_forget,
+            mascot::mascot_current,
+            mascot::mascot_clear,
             spotify::spotify_refresh,
             spotify::spotify_control,
             spotify::spotify_open,
@@ -1097,10 +1245,13 @@ pub fn run() {
             if let Some(win) = island::window(&handle) {
                 // Where Tauri takes the drop itself (Linux), its paths are the
                 // ones ingest_file may copy (files.rs).
-                win.on_window_event(|event| {
-                    if let tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event {
+                let moved_app = handle.clone();
+                win.on_window_event(move |event| match event {
+                    tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) => {
                         files::allow_dropped(paths.iter().map(|p| p.to_string_lossy().to_string()));
                     }
+                    tauri::WindowEvent::Moved(pos) => corner_moved(&moved_app, pos.x as f64, pos.y as f64),
+                    _ => {}
                 });
                 platform::make_non_activating(&win);
                 #[cfg(windows)]
@@ -1155,7 +1306,10 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{diff_file, is_forge_instance_url};
+    use std::cell::Cell;
+    use std::sync::atomic::Ordering;
+
+    use super::{diff_file, finish_corner_drag, is_forge_instance_url, CORNER_DRAG};
 
     #[test]
     fn forge_links_stay_on_the_configured_instance() {
@@ -1190,5 +1344,16 @@ mod tests {
         assert!(diff_file("").is_none());
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_settled_corner_drag_reapplies_geometry() {
+        let applied = Cell::new(false);
+        CORNER_DRAG.store(true, Ordering::Relaxed);
+
+        finish_corner_drag(|| applied.set(true));
+
+        assert!(!CORNER_DRAG.load(Ordering::Relaxed));
+        assert!(applied.get());
     }
 }

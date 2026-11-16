@@ -1,0 +1,339 @@
+import { beforeEach, test } from "node:test";
+import assert from "node:assert/strict";
+import {
+  AgentMascots,
+  MINI_COLORS,
+  agentEventFrom,
+  colorForType,
+  displayed,
+  exportFor,
+  familyOf,
+  placementFor,
+  positionKey,
+  slotsFor,
+  visibleSlots,
+} from "../src/mascot/agents.ts";
+
+const mascots = new AgentMascots();
+const A = { name: "A" };
+const B = { name: "B" };
+
+const event = (name, extra = {}, step = null) => agentEventFrom({
+  hook_event_name: name,
+  session_id: "s1",
+  ...extra,
+}, "integration_claude", "Coucou", step);
+
+beforeEach(() => mascots.clear());
+
+test("familyOf sorts the tags", () => {
+  assert.equal(familyOf(undefined), "claude");
+  assert.equal(familyOf("claude-desktop"), "claude");
+  assert.equal(familyOf("codex"), "codex");
+  assert.equal(familyOf("gemini"), null);
+});
+
+test("a session already running appears on its first event", () => {
+  mascots.apply(event("PreToolUse", { tool_name: "Read" }), 1000);
+  assert.equal(mascots.list.length, 1);
+  assert.equal(mascots.list[0].state, "working");
+  assert.equal(mascots.list[0].subagent, false);
+  assert.equal(mascots.list[0].label, "Coucou");
+});
+
+test("subagents get their own mascot and follow their own tools", () => {
+  mascots.apply(event("SessionStart"), 1000);
+  mascots.apply(event("SubagentStart", { agent_id: "a1", agent_type: "Explore" }), 1001);
+  mascots.apply(event("PermissionRequest", { agent_id: "a1", agent_type: "Explore" }), 1002);
+  assert.equal(mascots.list.length, 2);
+  assert.equal(mascots.list[0].state, "idle");
+  assert.equal(mascots.list[1].state, "approval");
+  assert.equal(mascots.list[1].label, "Explore");
+});
+
+test("helper subagents with an empty type get none", () => {
+  mascots.apply(event("SubagentStart", { agent_id: "a1", agent_type: "" }), 1000);
+  assert.equal(mascots.list.length, 0);
+  mascots.apply(event("PreToolUse", { agent_id: "a1", agent_type: "", tool_name: "Read" }), 1001);
+  assert.equal(mascots.list.length, 1);
+  assert.equal(mascots.list[0].key, "claude:s1");
+  assert.equal(mascots.list[0].state, "working");
+});
+
+test("a finished subagent leaves after three seconds", () => {
+  mascots.apply(event("SubagentStart", { agent_id: "a1", agent_type: "Explore" }), 1000);
+  mascots.apply(event("SubagentStop", { agent_id: "a1", agent_type: "Explore" }), 2000);
+  assert.equal(mascots.list[0].state, "finished");
+  mascots.tick(4999);
+  assert.equal(mascots.list.length, 1);
+  mascots.tick(5000);
+  assert.equal(mascots.list.length, 0);
+});
+
+test("stop shows finished then idle", () => {
+  mascots.apply(event("SessionStart"), 1000);
+  mascots.apply(event("Stop"), 2000);
+  assert.equal(mascots.list[0].state, "finished");
+  mascots.tick(5000);
+  assert.equal(mascots.list[0].state, "idle");
+});
+
+test("a silent session sleeps, then leaves after thirty minutes", () => {
+  mascots.apply(event("SessionStart"), 1000);
+  mascots.tick(121001);
+  assert.equal(mascots.list[0].state, "sleeping");
+  mascots.tick(1801001);
+  assert.equal(mascots.list.length, 0);
+});
+
+test("a question tool asks", () => {
+  mascots.apply(event("PreToolUse", { tool_name: "mcp__x:ask_question" }), 1000);
+  assert.equal(mascots.list[0].state, "question");
+});
+
+test("twenty agents show eight and a plus", () => {
+  assert.deepEqual(visibleSlots(20), { shown: 8, more: 12 });
+  assert.deepEqual(visibleSlots(3), { shown: 3, more: 0 });
+});
+
+test("codex falls back to the claude export", () => {
+  assert.equal(exportFor("codex", A, null), A);
+  assert.equal(exportFor("codex", A, B), B);
+  assert.equal(exportFor("claude", null, B), null);
+});
+
+test("nextChangeAt points at the next departure", () => {
+  mascots.apply(event("SubagentStart", { agent_id: "a1", agent_type: "Explore" }), 1000);
+  mascots.apply(event("SubagentStop", { agent_id: "a1", agent_type: "Explore" }), 2000);
+  assert.equal(mascots.nextChangeAt(), 5000);
+});
+
+test("active states go idle before sleeping after silence", () => {
+  for (const [name, extra] of [
+    ["UserPromptSubmit", {}],
+    ["PreToolUse", { tool_name: "Read" }],
+    ["StopFailure", {}],
+  ]) {
+    mascots.clear();
+    mascots.apply(event(name, extra), 1000);
+    mascots.tick(121000);
+    assert.equal(mascots.list[0].state, "idle", name);
+    mascots.tick(240999);
+    assert.equal(mascots.list[0].state, "idle", name);
+    mascots.tick(241000);
+    assert.equal(mascots.list[0].state, "sleeping", name);
+  }
+});
+
+test("approval and question stay awake while silent", () => {
+  mascots.apply(event("PermissionRequest"), 1000);
+  mascots.apply(event("PreToolUse", { agent_id: "a1", agent_type: "Explore", tool_name: "ask_question" }), 1000);
+  mascots.tick(241000);
+  assert.equal(mascots.list[0].state, "approval");
+  assert.equal(mascots.list[1].state, "question");
+});
+
+test("interrupt and stop failure match the tab states", () => {
+  mascots.apply(event("PreToolUse", { tool_name: "Read" }), 1000);
+  mascots.apply(event("Interrupt"), 1001);
+  assert.equal(mascots.list[0].state, "idle");
+  mascots.apply(event("StopFailure"), 1002);
+  assert.equal(mascots.list[0].state, "error");
+});
+
+test("notifications match rate limits and questions", () => {
+  mascots.apply(event("Notification", { message: "Rate limit reached" }), 1000);
+  assert.equal(mascots.list[0].state, "ratelimit");
+  mascots.apply(event("Notification", { message: "Continue?" }), 1001);
+  assert.equal(mascots.list[0].state, "question");
+});
+
+test("an event without a state keeps a finished transition", () => {
+  mascots.apply(event("SessionStart"), 1000);
+  mascots.apply(event("Stop"), 2000);
+  mascots.apply(event("UnknownEvent"), 3000);
+  mascots.tick(5000);
+  assert.equal(mascots.list[0].state, "idle");
+});
+
+test("an event without a state keeps a scheduled departure", () => {
+  const agent = { agent_id: "a1", agent_type: "Explore" };
+  mascots.apply(event("SubagentStart", agent), 1000);
+  mascots.apply(event("SubagentStop", agent), 2000);
+  mascots.apply(event("UnknownEvent", agent), 3000);
+  mascots.tick(5000);
+  assert.equal(mascots.list.length, 0);
+});
+
+test("session end also removes its subagents", () => {
+  mascots.apply(event("SessionStart"), 1000);
+  mascots.apply(event("SubagentStart", { agent_id: "a1", agent_type: "Explore" }), 1001);
+  mascots.apply(event("SubagentStart", { agent_id: "a2", agent_type: "Plan" }), 1002);
+  mascots.apply(agentEventFrom({
+    hook_event_name: "SubagentStart",
+    session_id: "s2",
+    agent_id: "b1",
+    agent_type: "Explore",
+  }, "integration_claude", "Other", null), 1003);
+
+  mascots.apply(event("SessionEnd"), 2000);
+  mascots.tick(5000);
+
+  assert.deepEqual(mascots.list.map((mascot) => mascot.key), ["claude:s2:b1"]);
+});
+
+test("a codex session leaves after its turn, like its pill", () => {
+  const codex = (name) => agentEventFrom({ hook_event_name: name, session_id: "c1", coucou_agent: "codex" }, "agent_codex", "coucou", null);
+  mascots.apply(codex("UserPromptSubmit"), 1000);
+  mascots.apply(codex("Stop"), 2000);
+  assert.equal(mascots.list[0].state, "finished");
+  mascots.tick(4999);
+  assert.equal(mascots.list.length, 1);
+  mascots.tick(5000);
+  assert.equal(mascots.list.length, 0);
+});
+
+test("a claude session stays after its turn", () => {
+  mascots.apply(event("UserPromptSubmit"), 1000);
+  mascots.apply(event("Stop"), 2000);
+  mascots.tick(5000);
+  assert.equal(mascots.list.length, 1);
+  assert.equal(mascots.list[0].state, "idle");
+});
+
+test("a subagent keeps its own steps", () => {
+  mascots.apply(event("SessionStart"), 1000);
+  mascots.apply(event("PreToolUse", {
+    agent_id: "a1",
+    agent_type: "Explore",
+    tool_name: "Read",
+  }, "Reads \u00b7 one.ts"), 1001);
+  mascots.apply(event("PreToolUse", {
+    agent_id: "a1",
+    agent_type: "Explore",
+    tool_name: "Grep",
+  }, "Searches \u00b7 mascot"), 1002);
+
+  assert.deepEqual(mascots.list[0].steps, []);
+  assert.deepEqual(mascots.list[1].steps, ["Reads \u00b7 one.ts", "Searches \u00b7 mascot"]);
+});
+
+test("a session keeps its own steps", () => {
+  mascots.apply(event("SessionStart"), 1000);
+  mascots.apply(event("PreToolUse", { tool_name: "Read" }, "Reads \u00b7 one.ts"), 1001);
+  mascots.apply(event("PreToolUse", { tool_name: "Grep" }, "Searches \u00b7 mascot"), 1002);
+
+  assert.deepEqual(mascots.list[0].steps, ["Reads \u00b7 one.ts", "Searches \u00b7 mascot"]);
+});
+
+test("steps stop at fifty", () => {
+  mascots.apply(event("SubagentStart", { agent_id: "a1", agent_type: "Explore" }), 1000);
+  for (let i = 0; i < 60; i++) {
+    mascots.apply(event("PreToolUse", {
+      agent_id: "a1",
+      agent_type: "Explore",
+      tool_name: "Read",
+    }, `step ${i}`), 1001 + i);
+  }
+
+  assert.equal(mascots.list[0].steps.length, 50);
+  assert.equal(mascots.list[0].steps[0], "step 10");
+  assert.equal(mascots.list[0].steps[49], "step 59");
+});
+
+test("a subagent keeps its final answer", () => {
+  const agent = { agent_id: "a1", agent_type: "Explore" };
+  mascots.apply(event("SubagentStart", agent), 1000);
+  mascots.apply(event("SubagentStop", {
+    ...agent,
+    last_assistant_message: "The answer is ready.",
+  }), 1001);
+
+  assert.equal(mascots.list[0].finalText, "The answer is ready.");
+});
+
+test("a Claude Code session keeps its final answer", () => {
+  mascots.apply(event("SessionStart"), 1000);
+  mascots.apply(event("Stop", {
+    last_assistant_message: "Claude finished the task.",
+  }), 1001);
+
+  assert.equal(mascots.list[0].finalText, "Claude finished the task.");
+});
+
+test("a Codex session keeps its final answer", () => {
+  const codex = (name, extra = {}) => agentEventFrom({
+    hook_event_name: name,
+    session_id: "c1",
+    coucou_agent: "codex",
+    ...extra,
+  }, "agent_codex", "text-to-mascot", null);
+  mascots.apply(codex("SessionStart"), 1000);
+  mascots.apply(codex("Stop", {
+    last_assistant_message: "Codex finished the task.",
+  }), 1001);
+
+  assert.equal(mascots.list[0].finalText, "Codex finished the task.");
+});
+
+test("a subagent knows its parent", () => {
+  mascots.apply(event("SubagentStart", { agent_id: "a1", agent_type: "Explore" }), 1000);
+  assert.equal(mascots.list[0].parentKey, "claude:s1");
+});
+
+test("an unknown type always gets the same color", () => {
+  const first = colorForType("Explore", {});
+  const second = colorForType("Explore", {});
+  assert.equal(first, second);
+  assert.ok(MINI_COLORS.includes(first));
+});
+
+test("a chosen color wins", () => {
+  assert.equal(colorForType("Explore", { Explore: { color: "#123456" } }), "#123456");
+});
+
+test("position keys follow type or project", () => {
+  mascots.apply(event("SessionStart"), 1000);
+  mascots.apply(event("SubagentStart", { agent_id: "a1", agent_type: "Explore" }), 1001);
+  assert.equal(positionKey(mascots.list[0]), "claude:project:Coucou");
+  assert.equal(positionKey(mascots.list[1]), "claude:type:Explore");
+});
+
+test("sessions only hides subagents", () => {
+  mascots.apply(event("SessionStart"), 1000);
+  mascots.apply(event("SubagentStart", { agent_id: "a1", agent_type: "Explore" }), 1001);
+  assert.deepEqual(displayed(mascots.list, "sessions").map((mascot) => mascot.key), ["claude:s1"]);
+});
+
+test("none hides everything", () => {
+  mascots.apply(event("SessionStart"), 1000);
+  assert.deepEqual(displayed(mascots.list, "none"), []);
+});
+
+test("a placed type comes back to its place", () => {
+  mascots.apply(event("SubagentStart", { agent_id: "a1", agent_type: "Explore" }), 1000);
+  const mascot = mascots.list[0];
+  assert.deepEqual(placementFor(mascot, mascots.list, {
+    "claude:type:Explore": { x: 320, y: 180 },
+  }, 90, true), [320, 180]);
+});
+
+test("a second one of the same type is shifted toward the centre", () => {
+  mascots.apply(event("SubagentStart", { agent_id: "a1", agent_type: "Explore" }), 1000);
+  mascots.apply(event("SubagentStart", { agent_id: "a2", agent_type: "Explore" }), 1001);
+  const positions = { "claude:type:Explore": { x: 320, y: 180 } };
+  assert.deepEqual(placementFor(mascots.list[1], mascots.list, positions, 90, true), [275, 180]);
+  assert.deepEqual(placementFor(mascots.list[1], mascots.list, positions, 90, false), [365, 180]);
+});
+
+test("sessions only sends no subagent slot", () => {
+  mascots.apply(event("SessionStart"), 1000);
+  mascots.apply(event("SubagentStart", { agent_id: "a1", agent_type: "Explore" }), 1001);
+  const settings = {
+    miniSize: 100,
+    miniDisplay: "sessions",
+    miniPositions: {},
+    scale: 1.5,
+  };
+  assert.deepEqual(slotsFor(mascots.list, settings, true), [{ size: 100, at: null }]);
+});

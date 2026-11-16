@@ -23,6 +23,8 @@ import { startHub, type PageId } from "../hub/shell";
 import { FLOW_PAGE_RENDERERS } from "../hub/pages";
 import { claudeModelControl } from "./claude-models";
 import { agentsSection } from "./agents";
+import { mascotSection } from "./mascot";
+import { CORNER_SUPPORTED } from "../island/corner";
 import { phoneSection } from "./phone";
 import { whatsappSection } from "./whatsapp";
 import { WHATSAPP_ID } from "../core/whatsapp";
@@ -1537,7 +1539,15 @@ async function render() {
   generalSync = null;
   clear(root);
   const sections: Partial<Record<PageId, () => HTMLElement[]>> = {
-    general: () => [generalSection()],
+    // Corner mode is Windows only (island/corner.ts).
+    general: () => [
+      ...(CORNER_SUPPORTED ? [mascotSection(
+        () => settings,
+        () => save(),
+        (redraw) => declaredViews.push(redraw),
+      )] : []),
+      generalSection(),
+    ],
     pills: () => [activePillsSection(connected)],
     agents: () => [claudeSection(status), agentsSection(agents), planSection(status)],
     chat: () => [subscriptionsSection(), apiSection(hasKey, claudeRelay), chatProvidersSection(chatKeys, keyChanged), localSection(customKey)],

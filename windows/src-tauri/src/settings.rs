@@ -1,7 +1,7 @@
 // Preferences, stored as plain JSON in settings.json under platform::config_dir().
 // No secret ever lands here — API keys live in the OS keychain (see secrets.rs).
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
 use std::io::ErrorKind;
@@ -120,6 +120,50 @@ pub struct Settings {
     /// (agy_approvals.rs). Off by default; owned by the Rust side like `phone_link`, so
     /// what a webview sends back is ignored. The Mac's key is the same.
     pub agy_approvals_enabled: bool,
+    /// Where the island lives: "corner" (a MascotForge mascot or Mochi in a
+    /// corner of the screen, the panel opening beside it) or "top" (the
+    /// original island at the top centre). Anything else reads as "top".
+    pub island_anchor: String,
+    /// Corner mode: the mascot's top-left in physical screen px, where the user
+    /// last dropped it; None for the bottom-right corner. Owned by Rust
+    /// (lib.rs saves it when the window is dragged), like `desktop_mochi`.
+    pub corner_pos: Option<CornerPos>,
+    /// Logical side of the big corner mascot.
+    #[serde(default = "default_mascot_size", deserialize_with = "deserialize_mascot_size")]
+    pub mascot_size: f64,
+    /// Parent folder whose direct children may be MascotForge exports.
+    pub mascot_folder: Option<String>,
+    /// Logical side of a session mini; subagents use three quarters of it.
+    pub mini_size: f64,
+    /// Which agent minis the corner shows: "all", "sessions" or "none".
+    pub mini_display: String,
+    /// Which export minis use: "role" or a stable pick from "gallery".
+    pub mini_mascot_mode: String,
+    /// A gallery source and id pinned to a project or subagent type.
+    pub mini_mascot_pins: BTreeMap<String, String>,
+    /// Session projects seen so far, for the pin controls in Settings.
+    pub known_mini_projects: Vec<String>,
+    /// A chosen appearance for each known subagent type.
+    pub subagent_looks: BTreeMap<String, SubagentLook>,
+    /// Subagent types seen so far, including ones without a chosen look.
+    pub known_subagent_types: Vec<String>,
+    /// Saved physical screen positions, keyed by type or project.
+    pub mini_positions: BTreeMap<String, CornerPos>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SubagentLook {
+    pub color: Option<String>,
+    pub accessory: Option<String>,
+    pub eyes: Option<String>,
+    pub cheeks: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct CornerPos {
+    pub x: f64,
+    pub y: f64,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -141,6 +185,17 @@ pub struct DesktopSpot {
 
 fn default_model() -> String {
     crate::claude::DEFAULT_MODEL.to_string()
+}
+
+fn default_mascot_size() -> f64 {
+    240.0
+}
+
+fn deserialize_mascot_size<'de, D>(deserializer: D) -> Result<f64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Ok(f64::deserialize(deserializer)?.clamp(120.0, 240.0))
 }
 
 impl Default for Settings {
@@ -192,6 +247,19 @@ impl Default for Settings {
             show_clock: false,
             closed_island: "mochi".into(),
             agy_approvals_enabled: false,
+            // Corner mode is Windows only (island.rs corner_mode).
+            island_anchor: if cfg!(windows) { "corner" } else { "top" }.into(),
+            corner_pos: None,
+            mascot_size: default_mascot_size(),
+            mascot_folder: None,
+            mini_size: 120.0,
+            mini_display: "all".into(),
+            mini_mascot_mode: "role".into(),
+            mini_mascot_pins: BTreeMap::new(),
+            known_mini_projects: Vec::new(),
+            subagent_looks: BTreeMap::new(),
+            known_subagent_types: Vec::new(),
+            mini_positions: BTreeMap::new(),
         }
     }
 }
@@ -494,7 +562,19 @@ mod tests {
   "phoneRelayUrl": "wss://relay.example.workers.dev",
   "showClock": true,
   "closedIsland": "music",
-  "agyApprovalsEnabled": true
+  "agyApprovalsEnabled": true,
+  "islandAnchor": "top",
+  "cornerPos": { "x": 100.0, "y": 200.0 },
+  "mascotSize": 180.0,
+  "mascotFolder": "C:\\Mascots",
+  "miniSize": 96.0,
+  "miniDisplay": "sessions",
+  "miniMascotMode": "gallery",
+  "miniMascotPins": { "project:questflow": "library:orbi" },
+  "knownMiniProjects": ["questflow"],
+  "subagentLooks": { "Explore": { "color": "#60A5FA", "accessory": "cap", "eyes": "round", "cheeks": "rose" } },
+  "knownSubagentTypes": ["Explore"],
+  "miniPositions": { "claude:type:Explore": { "x": 300.0, "y": 400.0 } }
 }"##;
 
     fn custom() -> Value {
@@ -574,6 +654,75 @@ mod tests {
     fn unknown_fields_are_ignored_and_the_known_ones_kept() {
         let bytes = custom_with("somethingFromALaterVersion", Some(json!({ "a": [1, 2] })));
         assert_eq!(shown(&parse(&bytes).unwrap()), custom());
+    }
+
+    #[test]
+    fn customisable_mascot_settings_have_safe_defaults() {
+        let settings = Settings::default();
+        assert_eq!(settings.mascot_size, 240.0);
+        assert_eq!(settings.mascot_folder, None);
+        assert_eq!(settings.mini_size, 120.0);
+        assert_eq!(settings.mini_display, "all");
+        assert!(settings.subagent_looks.is_empty());
+        assert!(settings.known_subagent_types.is_empty());
+        assert!(settings.mini_positions.is_empty());
+    }
+
+    #[test]
+    fn random_mini_mascots_use_role_defaults() {
+        let settings = Settings::default();
+        assert_eq!(settings.mini_mascot_mode, "role");
+        assert!(settings.mini_mascot_pins.is_empty());
+        assert!(settings.known_mini_projects.is_empty());
+    }
+
+    #[test]
+    fn a_file_from_before_random_mini_mascots_uses_role_defaults() {
+        let mut old = custom().as_object().unwrap().clone();
+        for key in ["miniMascotMode", "miniMascotPins", "knownMiniProjects"] {
+            old.remove(key);
+        }
+        let loaded = parse(&serde_json::to_vec(&old).unwrap()).unwrap();
+
+        assert_eq!(loaded.mini_mascot_mode, "role");
+        assert!(loaded.mini_mascot_pins.is_empty());
+        assert!(loaded.known_mini_projects.is_empty());
+        assert_eq!(loaded.model, "some-model");
+    }
+
+    #[test]
+    fn a_file_from_before_customisable_mascots_uses_the_defaults() {
+        let mut old = custom().as_object().unwrap().clone();
+        for key in [
+            "mascotSize",
+            "mascotFolder",
+            "miniSize",
+            "miniDisplay",
+            "subagentLooks",
+            "knownSubagentTypes",
+            "miniPositions",
+        ] {
+            old.remove(key);
+        }
+        let loaded = parse(&serde_json::to_vec(&old).unwrap()).unwrap();
+
+        assert_eq!(loaded.mascot_size, 240.0);
+        assert_eq!(loaded.mascot_folder, None);
+        assert_eq!(loaded.mini_size, 120.0);
+        assert_eq!(loaded.mini_display, "all");
+        assert!(loaded.subagent_looks.is_empty());
+        assert!(loaded.known_subagent_types.is_empty());
+        assert!(loaded.mini_positions.is_empty());
+        assert_eq!(loaded.model, "some-model");
+    }
+
+    #[test]
+    fn mascot_size_is_clamped() {
+        let too_large = parse(&custom_with("mascotSize", Some(json!(300.0)))).unwrap();
+        let too_small = parse(&custom_with("mascotSize", Some(json!(50.0)))).unwrap();
+
+        assert_eq!(too_large.mascot_size, 240.0);
+        assert_eq!(too_small.mascot_size, 120.0);
     }
 
     #[test]
@@ -1018,9 +1167,28 @@ mod tests {
                 "showClock",
                 "closedIsland",
                 "agyApprovalsEnabled",
+                "islandAnchor",
+                "cornerPos",
+                "mascotSize",
+                "mascotFolder",
+                "miniSize",
+                "miniDisplay",
+                "miniMascotMode",
+                "miniMascotPins",
+                "knownMiniProjects",
+                "subagentLooks",
+                "knownSubagentTypes",
+                "miniPositions",
             ]
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_mascot_sits_in_a_corner_by_default() {
+        let settings = Settings::default();
+        assert_eq!(settings.island_anchor, if cfg!(windows) { "corner" } else { "top" });
+        assert_eq!(settings.corner_pos, None);
     }
 
     #[test]
